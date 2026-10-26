@@ -1,0 +1,41 @@
+{
+  "name": "kasi",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint",
+    "typecheck": "tsc --noEmit",
+    "test": "node scripts/check-deploy-config.mjs && node --experimental-strip-types scripts/verify-retention.ts && node --experimental-strip-types scripts/verify-seller-cache.ts && node --experimental-strip-types scripts/verify-credit-pricing.ts && node --experimental-strip-types scripts/verify-analytics.ts && node --experimental-strip-types scripts/verify-seller-pool-shards.ts",
+    "verify": "npm run typecheck && npm run lint && npm run test",
+    "check:deploy": "node scripts/check-deploy-config.mjs --require-project-id",
+    "audit:links": "node audit-links.mjs",
+    "audit:crawl": "node audit-crawl.mjs",
+    "audit:spot": "node audit-spot.mjs",
+    "predeploy:firebase": "npm run check:deploy",
+    "deploy:firebase": "firebase deploy --only firestore,storage",
+    "bootstrap:admin": "node scripts/bootstrap-admin.mjs",
+    "emulators": "firebase emulators:start"
+  },
+  "dependencies": {
+    "firebase": "^12.19.0",
+    "firebase-admin": "^14.4.0",
+    "lucide-react": "^1.47.0",
+    "next": "16.3.4",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "resend": "^6.32.1"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.3.4",
+    "tailwindcss": "^4",
+    "typescript": "^5"
+  }
+}

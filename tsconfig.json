@@ -1,0 +1,44 @@
+{
+  "compilerOptions": {
+    "target": "ES2017",
+    "lib": ["dom", "dom.iterable", "esnext"],
+    "allowJs": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "jsx": "react-jsx",
+    "incremental": true,
+    "plugins": [
+      {
+        "name": "next"
+      }
+    ],
+    "paths": {
+      "@/*": ["./src/*"]
+    }
+  },
+  "include": [
+    "next-env.d.ts",
+    "**/*.ts",
+    "**/*.tsx",
+    ".next/types/**/*.ts",
+    ".next/dev/types/**/*.ts",
+    "**/*.mts"
+  ],
+  "exclude": [
+    "node_modules",
+    // Turbopack source-map artifacts in the workspace root are not application sources.
+    "*_next_server_chunks*_js_map.ts",
+    // Standalone operational scripts, run directly by Node
+    // (`node --experimental-strip-types scripts/...`) rather than bundled by Next.
+    // They intentionally import with explicit `.ts` extensions and resolve the
+    // `@/` alias through scripts/alias-hook.mjs, neither of which the app's
+    // TypeScript config allows.
+    "scripts"
+  ]
+}

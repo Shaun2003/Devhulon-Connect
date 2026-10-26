@@ -1,0 +1,87 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    // ─ Seller-owned uploads ────────────────────────────────────────────────
+    // The uid is part of the path, which is what makes an ownership check
+    // possible: Storage rules cannot read Firestore, so the path must carry the
+    // identity. Use these prefixes for portfolio items, avatars and covers.
+    match /users/{uid}/{allPaths=**} {
+      allow read: if true;
+      allow write: if request.auth != null
+        && request.auth.uid == uid
+        && request.resource.size < 5 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+    }
+
+    match /portfolio/{uid}/{allPaths=**} {
+      allow read: if true;
+      allow write: if request.auth != null
+        && request.auth.uid == uid
+        && request.resource.size < 8 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+    }
+
+    // ── Legacy business photos (READ-ONLY) ──────────────────────────────────
+    // Photos uploaded before the ownerUid was added to the path live at
+    // businesses/{bizId}/{file} — only TWO segments. That shape matches none of
+    // the rules below, so it fell through to the final catch-all
+    // (`allow read, write: if false`) and every existing listing photo would have
+    // broken the moment these rules were deployed.
+    //
+    // These are kept READ-ONLY on purpose. Re-granting write here would re-open the
+    // original hole (any signed-in user could overwrite any business's photo), and
+    // this script is a one-off historical repair — those images stay editable
+    // through Firestore ownership rules on the listing itself, and new uploads use
+    // the uid-bearing path.
+    //
+    // REMOVE this block once no live listing references a /businesses/{id}/{file}
+    // URL any more (check the `photos` arrays in Firestore), then deploy again.
+    match /businesses/{bizId}/{legacyFile} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    // ── Business photos (current, owner-scoped) ─────────────────────────────
+    // The path carries BOTH the business id and the uploader's uid:
+    //   businesses/{bizId}/{ownerUid}/{file}
+    //
+    // The uid is what makes this authorisable. Storage rules cannot read
+    // Firestore, so an earlier version of this rule matched
+    // `businesses/{bizId}/{file}` and only checked `request.auth != null` — which
+    // meant ANY signed-in user who guessed or scraped a business id could
+    // overwrite that business's photos. Asserting the uid closes that.
+    //
+    // Note the limit this still leaves: a seller may only write to a business
+    // folder bearing THEIR OWN uid, but this rule cannot confirm that uid is the
+    // business's actual owner. Enforcing ownership of the business id itself is
+    // done client/server-side by `addBusinessPhotoLink`, which writes Firestore
+    // under real ownership rules. Uploading is scoped; attaching is verified.
+    match /businesses/{bizId}/{ownerUid}/{file} {
+      allow read: if true;
+      allow write: if request.auth != null
+        && request.auth.uid == ownerUid
+        && request.resource.size < 5 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+    }
+
+    // ── Seller verification documents (ID / proof of address) ────────────────
+    // Used by BOTH register-seller (document step) and the dashboard's
+    // verification-request panel — path is seller-verification/{uid}/{docType}/{file}.
+    // The uid segment is what makes the write authorisable: storage rules cannot
+    // read Firestore, so ownership must live in the path. Files are PII, so the
+    // SDK read is owner-only. The ADMIN reviews the tokenised download URL stored
+    // in Firestore — getDownloadURL tokens bypass read rules by design — so this
+    // restriction does not block the review flow.
+    match /seller-verification/{uid}/{allPaths=**} {
+      allow read: if request.auth != null && request.auth.uid == uid;
+      allow write: if request.auth != null
+        && request.auth.uid == uid
+        && request.resource.size < 5 * 1024 * 1024
+        && (request.resource.contentType.matches('image/.*')
+            || request.resource.contentType.matches('application/pdf'));
+    }
+
+    match /{allPaths=**} { allow read, write: if false; }
+  }
+}

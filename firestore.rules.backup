@@ -1,0 +1,141 @@
+rules_version = '2';
+
+// KASI Firestore rules — paste into Firebase Console → Firestore → Rules.
+// Model: content is PUBLIC to read (buyers browse without an account);
+// writing requires sign-in; users only edit their own documents.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+    function isMe(uid) { return signedIn() && request.auth.uid == uid; }
+    // Admin registry — the first admin self-claims via /admin/seed (admins/{uid}).
+    function isAdmin() { return signedIn() && exists(/databases/$(database)/documents/admins/$(request.auth.uid)); }
+
+    // Counter-only updates: anonymous visitors may ONLY bump these fields
+    // (profile views / click analytics / review count). Nothing else.
+    function counterKeysOnly() {
+      return request.resource.data.diff(resource.data).affectedKeys()
+        .hasOnly(['profileViews', 'phoneClicks', 'whatsappClicks', 'websiteClicks', 'reviewCount']);
+    }
+
+    // ── Reference data (seeded from /admin/seed while signed in) ──────────
+    match /provinces/{id}  { allow read: if true; allow write: if signedIn(); }
+    match /cities/{id}     { allow read: if true; allow write: if signedIn(); }
+    match /suburbs/{id}    { allow read: if true; allow write: if signedIn(); }
+    match /categories/{id} { allow read: if true; allow write: if signedIn(); }
+    match /articles/{id}   { allow read: if true; allow write: if signedIn(); }
+
+    // ── Business directory ─────────────────────────────────────────────────
+    match /businesses/{bizId} {
+      allow read: if true;
+      allow create: if signedIn();
+      allow update: if (signedIn() && resource.data.ownerUid == request.auth.uid)
+                    || counterKeysOnly()
+                    || isAdmin();
+      allow delete: if signedIn() && (resource.data.ownerUid == request.auth.uid || isAdmin());
+    }
+
+    match /business_reviews/{id} {
+      allow read: if true;
+      allow create: if signedIn();
+      allow update: if signedIn() && (
+        resource.data.reviewerUid == request.auth.uid
+        || (resource.data.businessOwnerUid == request.auth.uid
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['reply']))
+        || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['helpfulCount', 'helpfulVoters'])
+      ) || isAdmin();
+      allow delete: if signedIn() && resource.data.reviewerUid == request.auth.uid || isAdmin();
+    }
+
+    // ── Community feeds ────────────────────────────────────────────────────
+    match /jobs/{id} {
+      allow read: if true;
+      allow create: if signedIn();
+      allow update, delete: if (signedIn() && resource.data.createdBy == request.auth.uid) || isAdmin();
+    }
+    match /events/{id} {
+      allow read: if true;
+      allow create: if signedIn();
+      allow update, delete: if (signedIn() && resource.data.createdBy == request.auth.uid) || isAdmin();
+    }
+    match /deals/{id} {
+      allow read: if true;
+      allow create: if signedIn();
+      allow update, delete: if (signedIn() && resource.data.createdBy == request.auth.uid) || isAdmin();
+    }
+
+    // ── Leads (quote requests) ─────────────────────────────────────────────
+    // Anyone may request a quote. Participants read their own leads;
+    // signed-in sellers may browse OPEN (broadcast) leads.
+    match /leads/{id} {
+      allow create: if true;
+      allow read: if signedIn() && (
+        resource.data.ownerUid == request.auth.uid ||
+        resource.data.requesterUid == request.auth.uid ||
+        resource.data.status == 'new'
+      );
+      allow update: if signedIn();
+      allow delete: if false;
+    }
+
+    // ── Accounts & subscriptions ───────────────────────────────────────────
+    // Admins need the user list to support sellers; profile writes stay owner-only.
+    match /users/{uid} { allow read: if isMe(uid) || isAdmin(); allow write: if isMe(uid); }
+    // DEMO: users write their own subscription doc. For real payments replace
+    // the write with a Cloud Function / Admin SDK and drop this rule.
+    // Admins read every subscription so the console can show plan revenue.
+    match /subscriptions/{uid} { allow read: if isMe(uid) || isAdmin(); allow write: if isMe(uid); }
+
+    // Invoices / payment records. Owners read their own; admins read all.
+    // Clients may only CREATE a pending demo record — a real gateway webhook
+    // (Cloud Function / Admin SDK) is what marks one "paid" in production.
+    match /payments/{id} {
+      allow read: if signedIn() && (resource.data.ownerUid == request.auth.uid || isAdmin());
+      allow create: if signedIn() && request.resource.data.ownerUid == request.auth.uid
+                    && request.resource.data.status == 'pending';
+      allow update, delete: if isAdmin();
+    }
+
+    match /business_claims/{id} {
+      allow create: if signedIn() && request.resource.data.claimantUid == request.auth.uid;
+      allow read: if signedIn() && (resource.data.claimantUid == request.auth.uid || isAdmin());
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    match /favorites/{id} {
+      allow read: if signedIn() && resource.data.ownerUid == request.auth.uid;
+      allow create, update: if signedIn() && request.resource.data.ownerUid == request.auth.uid;
+      allow delete: if signedIn() && resource.data.ownerUid == request.auth.uid;
+    }
+
+    // Saved searches (buyer watchlists)
+    match /saved_searches/{id} {
+      allow read: if signedIn() && resource.data.ownerUid == request.auth.uid;
+      allow create, update: if signedIn() && request.resource.data.ownerUid == request.auth.uid;
+      allow delete: if signedIn() && resource.data.ownerUid == request.auth.uid;
+    }
+
+    // Notifications — realtime bell; recipient reads/updates; actors create.
+    match /notifications/{id} {
+      allow read: if signedIn() && resource.data.toUid == request.auth.uid;
+      allow create: if signedIn();
+      allow update: if signedIn() && resource.data.toUid == request.auth.uid;
+      allow delete: if signedIn() && resource.data.toUid == request.auth.uid;
+    }
+
+    // Abuse reports — signed-in users file; admins read & resolve.
+    match /reports/{id} {
+      allow create: if signedIn();
+      allow read: if isAdmin();
+      allow update, delete: if isAdmin();
+    }
+
+    // Admin registry — first admin self-claims via /admin/seed.
+    match /admins/{uid} {
+      allow read: if signedIn();
+      allow create: if isMe(uid);
+      allow delete: if false;
+    }
+  }
+}

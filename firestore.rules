@@ -1,0 +1,876 @@
+rules_version = '2';
+
+// KASI Firestore rules
+// ─────────────────────────────────────────────────────────────────────────────
+// Model
+//   • Content is PUBLIC to read — buyers browse without an account.
+//   • Writes require sign-in, and users only write their OWN documents.
+//   • Anything money- or allowance-related is written by the TRUSTED SERVER
+//     (Next.js route handlers + Admin SDK) and is read-only to clients.
+//
+// SECURITY CHANGES vs the previous revision (all were exploitable):
+//   1. /admins          — any signed-in user could self-claim admin. Now
+//                         console/Admin-SDK only. ← critical
+//   2. /subscriptions   — clients could grant themselves the top plan for free.
+//                         Now server-write-only.
+//   3. /payments        — clients could create arbitrary "paid" records.
+//                         Now server-write-only.
+//   4. /leads           — `allow update: if signedIn()` let ANY user rewrite or
+//                         hijack ANY lead. Now participants only.
+//   5. /businesses      — anonymous callers could set `reviewCount` (rating
+//                         fraud) and `plan`/`verified` (free upgrades).
+//   6. reference data   — `categories`/`cities`/`suburbs`/`articles` were
+//                         writable by any signed-in user. Now admin only.
+//   7. /notifications   — any user could forge a notification to any other user.
+//                         Now the sender must be the caller.
+//
+// Deploy with `npm run deploy:firebase` after configuring `.firebaserc` with
+// the intended Firebase project. This file is the configured rules source.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+    function isMe(uid) { return signedIn() && request.auth.uid == uid; }
+    function leadUnlockPath(sellerUid, leadId) {
+      return /databases/$(database)/documents/lead_unlocks/$(sellerUid + '_' + leadId);
+    }
+    function hasLeadUnlock(sellerUid, leadId) {
+      let leadPath = /databases/$(database)/documents/leads/$(leadId);
+      return exists(leadUnlockPath(sellerUid, leadId))
+        || (exists(leadPath)
+          && exists(/databases/$(database)/documents/lead_unlocks/$(sellerUid + '_' + get(leadPath).data.get('requestId', leadId))));
+    }
+
+    // Admin registry. Created ONLY from the Firebase Console or the Admin SDK —
+    // never by a client, otherwise every user is one request away from admin.
+    function isAdmin() {
+      return signedIn() && exists(/databases/$(database)/documents/admins/$(request.auth.uid));
+    }
+    function teamMembershipPath(ownerUid, memberUid) {
+      return /databases/$(database)/documents/team_memberships/$(ownerUid + '__' + memberUid);
+    }
+    function isTeamMember(ownerUid) {
+      return signedIn()
+        && exists(teamMembershipPath(ownerUid, request.auth.uid))
+        && get(teamMembershipPath(ownerUid, request.auth.uid)).data.status == 'active'
+        && hasSub(ownerUid)
+        && subActive(ownerUid)
+        && tier(sub(ownerUid).plan) >= 2;
+    }
+    function isTeamManager(ownerUid) {
+      return isTeamMember(ownerUid)
+        && get(teamMembershipPath(ownerUid, request.auth.uid)).data.role == 'manager';
+    }
+    match /admins/{uid} {
+      // Admins can see the whole registry; anyone may check their OWN entry so
+      // the UI can show "not an admin" instead of a permission error.
+      allow read: if isMe(uid) || isAdmin();
+      allow write: if false; // Admin SDK / console only
+    }
+
+    // ── Subscriptions: the single source of truth for plan entitlements ──────
+    // Readable by the owner (dashboards stay realtime) and admins.
+    // NEVER writable by a client — see the billing route handlers.
+    function subPath(uid) { return /databases/$(database)/documents/subscriptions/$(uid); }
+    function hasSub(uid) { return exists(subPath(uid)); }
+    function sub(uid) { return get(subPath(uid)).data; }
+    function subPeriodCurrent(uid) {
+      return !('current_period_end_at' in sub(uid))
+        || (sub(uid).current_period_end_at is timestamp
+          && request.time < sub(uid).current_period_end_at);
+    }
+    // Accepts BOTH the new `subscription_status` and the legacy `status` field,
+    // so sellers who subscribed before the marketplace release keep working.
+    function subActive(uid) {
+      return hasSub(uid) && subPeriodCurrent(uid) && (
+        sub(uid).subscription_status == 'trialing'
+        || sub(uid).subscription_status == 'active'
+        || sub(uid).subscription_status == 'past_due'
+        || sub(uid).status == 'active'
+        || (sub(uid).subscription_status == 'canceled'
+          && sub(uid).get('cancel_at_period_end', false) == true)
+      );
+    }
+    // Tier of a plan id, tolerant of the legacy free/pro/premium names.
+    //   starter/free = 0, professional/pro = 1, business/premium = 2
+    function tier(v) {
+      return v == 'business' || v == 'premium' ? 2
+           : v == 'professional' || v == 'pro' ? 1
+           : 0;
+    }
+    function servicesWithinPlan(planId) {
+      return !('services' in request.resource.data)
+        || (request.resource.data.services is list
+          && (tier(planId) >= 2
+            || request.resource.data.services.size() <= (tier(planId) == 1 ? 20 : 5)));
+    }
+    function serviceAreasWithinPlan(planId) {
+      return !('serviceAreas' in request.resource.data)
+        || (request.resource.data.serviceAreas is list
+          && (tier(planId) >= 2
+            || request.resource.data.serviceAreas.size() <= (tier(planId) == 1 ? 2 : 1)));
+    }
+    function profileFieldsWithinPlan(planId) {
+      return (request.resource.data.get('whatsapp', '') == '' || tier(planId) >= 1)
+        && (request.resource.data.get('website', '') == '' || tier(planId) >= 1)
+        && (request.resource.data.get('coverImageUrl', '') == '' || tier(planId) >= 1)
+        && (request.resource.data.get('photos', []) == resource.data.get('photos', []) || tier(planId) >= 1)
+        && (request.resource.data.get('facebook', '') == '' || tier(planId) >= 2)
+        && (request.resource.data.get('instagram', '') == '' || tier(planId) >= 2);
+    }
+    // A seller may only claim a plan at or below the tier they actually pay for,
+    // which stops a Starter seller writing plan: "business" onto their listing.
+    function planClaimOk(uid, claimed) {
+      return subActive(uid) && tier(claimed) <= tier(sub(uid).plan);
+    }
+
+    match /subscriptions/{uid} {
+      allow read: if isMe(uid) || isAdmin();
+      allow write: if false; // Admin SDK only (route handlers)
+    }
+
+    // ── Payments / invoices ─────────────────────────────────────────────────
+    // Server-write-only, so a client cannot fabricate a successful payment.
+    match /payments/{id} {
+      allow read: if signedIn() && (resource.data.ownerUid == request.auth.uid || isAdmin());
+      allow write: if false; // Admin SDK only (checkout + webhook)
+    }
+
+    // ── Credit wallet (marketplace pay-per-contact) ─────────────────────────
+    // The balance is money. Clients READ their own wallet so the dashboard stays
+    // realtime, but ONLY the Admin SDK writes it (unlock route + billing webhook),
+    // so a seller can never mint themselves credits or edit a balance by hand.
+    match /wallets/{uid} {
+      allow read: if isMe(uid) || isAdmin();
+      allow write: if false; // Admin SDK only
+    }
+
+    // The credit ledger is the audit trail behind the balance — every earn and
+    // every spend. Owner-readable, never client-writable.
+    match /credit_ledger/{id} {
+      allow read: if signedIn() && (resource.data.ownerUid == request.auth.uid || isAdmin());
+      allow write: if false; // Admin SDK only
+    }
+
+    // One immutable row per lead a seller has paid to unlock. Its EXISTENCE is
+    // the idempotency guard that stops a lead being charged twice, so it must be
+    // server-write-only too. Owner-readable so the feed can show "unlocked".
+    match /lead_unlocks/{id} {
+      allow read: if signedIn() && (resource.data.ownerUid == request.auth.uid || isAdmin());
+      allow write: if false; // Admin SDK only
+    }
+
+    // ── Lead contact vault (pay-per-contact) ──────────────────────────────────
+    // The buyer's phone/email/name is the PRODUCT being sold, so it does NOT
+    // live in the lead document any more — a client that can read a lead doc
+    // could read its contact fields, and rules cannot project individual fields.
+    // Contact is written here by the trusted server at lead-creation time and
+    // returned ONLY by POST /api/leads/unlock after the credit transaction
+    // succeeds. Nobody but the Admin SDK reads or writes this collection.
+    match /lead_contacts/{id} {
+      allow read: if isAdmin();
+      allow write: if false; // Admin SDK only
+    }
+
+    // ── Reference data ──────────────────────────────────────────────────────
+    // Admin-managed taxonomy. Previously writable by anyone signed in.
+    match /provinces/{id}  { allow read: if true; allow write: if isAdmin(); }
+    match /cities/{id}     { allow read: if true; allow write: if isAdmin(); }
+    match /suburbs/{id}    { allow read: if true; allow write: if isAdmin(); }
+    match /categories/{id} { allow read: if true; allow write: if isAdmin(); }
+    match /subscription_plans/{id} { allow read: if true; allow write: if isAdmin(); }
+
+    // ── Helper: counter bumps ───────────────────────────────────────────────
+    // View/click analytics must be usable by anonymous visitors, but each bump
+    // must be exactly +1 of a whitelisted field. This is what stops a visitor
+    // from writing `reviewCount: 9999`.
+    function touched(f) {
+      return f in request.resource.data.diff(resource.data).affectedKeys();
+    }
+    function bumpedByExactly(f, n) {
+      return !touched(f) || request.resource.data[f] == resource.data[f] + n;
+    }
+    function publicCountersOnly() {
+      return request.resource.data.diff(resource.data).affectedKeys()
+               .hasOnly(['profileViews', 'phoneClicks', 'whatsappClicks', 'websiteClicks'])
+        && bumpedByExactly('profileViews', 1)
+        && bumpedByExactly('phoneClicks', 1)
+        && bumpedByExactly('whatsappClicks', 1)
+        && bumpedByExactly('websiteClicks', 1);
+    }
+    // Aggregate review rollup may move by exactly one step, and only signed in.
+    // `rating` is written alongside `reviewCount` by recomputeBusinessRating()
+    // (submitReview used to bump only reviewCount, which stranded a business
+    // with real reviews permanently at `rating: 0`). Both fields are locked
+    // together so a caller still cannot invent a score: the pair is derived
+    // from the `business_reviews` documents, which only real reviews can create.
+    function reviewCountOnly() {
+      return signedIn()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['reviewCount', 'rating'])
+        && (request.resource.data.reviewCount == resource.data.reviewCount + 1
+            || request.resource.data.reviewCount == resource.data.reviewCount - 1
+            || request.resource.data.reviewCount == resource.data.reviewCount)
+        && request.resource.data.rating is number
+        && request.resource.data.rating >= 0
+        && request.resource.data.rating <= 5;
+    }
+    // Saves counter for seller analytics (spec §36): signed-in users only, and
+    // it may move by exactly one step in either direction (save vs unsave).
+    function savesCounterOk() {
+      return signedIn()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['saves'])
+        && (request.resource.data.saves == resource.data.saves + 1
+            || request.resource.data.saves == resource.data.saves - 1);
+    }
+
+    // ── Business directory (seller profiles) ────────────────────────────────
+    match /businesses/{bizId} {
+      allow read: if true;
+
+      // The API must count owned listings and apply the current plan's quotas.
+      // Admin SDK writes bypass Firestore rules, so direct browser creation is
+      // intentionally disabled.
+      allow create: if false;
+
+      allow update: if isAdmin()
+        || (signedIn() && resource.data.ownerUid == request.auth.uid
+            && request.resource.data.ownerUid == resource.data.ownerUid
+            && request.resource.data.verified == resource.data.verified
+            // The verification RECORD is admin-authored provenance (who checked,
+            // when, by what method). A seller must not be able to write their own
+            // verification evidence, and must not be able to set it to null to make
+            // a badge vanish without the badge itself changing. Both the record and
+            // the boolean are pinned; only the trusted /api/admin/verify route and
+            // an admin can move them.
+            && request.resource.data.verification == resource.data.verification
+            && request.resource.data.get('featured', false) == resource.data.get('featured', false)
+            // A seller may never upgrade their own plan here — only the server's
+            // subscription record can authorise a plan value.
+            && planClaimOk(request.auth.uid, request.resource.data.plan)
+            && servicesWithinPlan(request.resource.data.plan)
+            && serviceAreasWithinPlan(request.resource.data.plan)
+            && profileFieldsWithinPlan(request.resource.data.plan))
+        || (isTeamMember(resource.data.ownerUid)
+            && request.resource.data.ownerUid == resource.data.ownerUid
+            && request.resource.data.plan == resource.data.plan
+            && request.resource.data.verified == resource.data.verified
+            && request.resource.data.verification == resource.data.verification
+            && request.resource.data.get('featured', false) == resource.data.get('featured', false)
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'name', 'categorySlug', 'suburbSlug', 'citySlug', 'phone', 'address',
+              'hours', 'description', 'priceNote', 'services', 'serviceAreas',
+              'whatsapp', 'website', 'facebook', 'instagram', 'coverImageUrl',
+              'photos', 'updatedAt'
+            ])
+            && (isTeamManager(resource.data.ownerUid)
+              || request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+                'name', 'categorySlug', 'suburbSlug', 'citySlug', 'phone', 'address',
+                'hours', 'description', 'priceNote', 'services', 'serviceAreas', 'updatedAt'
+              ]))
+            && servicesWithinPlan(resource.data.get('plan', 'starter'))
+            && serviceAreasWithinPlan(resource.data.get('plan', 'starter'))
+            && profileFieldsWithinPlan(resource.data.get('plan', 'starter')))
+        || publicCountersOnly()
+        || reviewCountOnly()
+        || savesCounterOk();
+
+      allow delete: if signedIn() && (resource.data.ownerUid == request.auth.uid || isAdmin());
+    }
+
+    match /business_reviews/{id} {
+      allow read: if true;
+
+      // reviewerUid must be the caller — no writing reviews as somebody else.
+      //
+      // SELF-REVIEW IS BLOCKED HERE, not only in repo.ts. The client check is
+      // convenience; this is the enforcement. Without it, anyone could call the
+      // Firestore SDK directly and give their own business a 5★ review, on a page
+      // whose entire purpose is helping a buyer judge trust. The `get()` costs one
+      // extra read per review, which is a fair price for that — and reading the
+      // business doc is authoritative, whereas trusting a client-stamped
+      // `businessOwnerUid` would let an attacker simply omit the field.
+      allow create: if signedIn()
+        && request.resource.data.reviewerUid == request.auth.uid
+        && get(/databases/$(database)/documents/businesses/$(request.resource.data.businessId)).data.ownerUid
+             != request.auth.uid;
+      allow update: if signedIn() && (
+        (resource.data.reviewerUid == request.auth.uid
+          && request.resource.data.reviewerUid == resource.data.reviewerUid)
+        || (resource.data.businessOwnerUid == request.auth.uid
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['reply', 'repliedAt']))
+        || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['helpfulCount', 'helpfulVoters'])
+      ) || isAdmin();
+      allow delete: if signedIn() && (resource.data.reviewerUid == request.auth.uid || isAdmin());
+    }
+
+    // ── Community feeds ─────────────────────────────────────────────────────
+    // ── Community feeds: jobs / events / deals ───────────────────────────────
+    // SELLER-ONLY + PLAN-GATED.
+    //
+    // Previously ANY signed-in user could post to all three feeds, which turned
+    // the marketplace into an unmoderated board full of buyer spam and made
+    // "sellers post, buyers browse" untrue. Now the poster must have
+    // role == "seller" AND a capability unlocked by their ACTIVE subscription,
+    // so buyers cannot post anything at all and what a seller may publish is
+    // decided by the plan the trusted server recorded — never by the client.
+    function isSeller() {
+      return signedIn()
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'seller';
+    }
+    function paidSeller(minTier) {
+      return isSeller() && subActive(request.auth.uid) && tier(sub(request.auth.uid).plan) >= minTier;
+    }
+    // Jobs, events and deals unlock at Professional (tier 1); places/guides at Business (tier 2).
+    function canPublishFeed() { return paidSeller(1); }
+    function canPublishPlaces() { return paidSeller(2); }
+
+    // A post must declare its own author and carry a bounded title.
+    function validPost(titleMax) {
+      return request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.title is string
+        && request.resource.data.title.size() > 0
+        && request.resource.data.title.size() <= titleMax
+        && request.resource.data.get('featured', false) != true;
+    }
+
+    match /jobs/{id} {
+      allow read: if true;
+      allow create: if canPublishFeed() && validPost(120);
+      allow update: if isAdmin() || (signedIn() && resource.data.createdBy == request.auth.uid
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['featured']));
+      allow delete: if isAdmin() || (signedIn() && resource.data.createdBy == request.auth.uid);
+    }
+    match /events/{id} {
+      allow read: if true;
+      allow create: if canPublishFeed() && validPost(140);
+      allow update: if isAdmin() || (signedIn() && resource.data.createdBy == request.auth.uid
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['featured']));
+      allow delete: if isAdmin() || (signedIn() && resource.data.createdBy == request.auth.uid);
+    }
+    match /deals/{id} {
+      allow read: if true;
+      allow create: if canPublishFeed() && validPost(140);
+      allow update: if isAdmin() || (signedIn() && resource.data.createdBy == request.auth.uid
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['featured']));
+      allow delete: if isAdmin() || (signedIn() && resource.data.createdBy == request.auth.uid);
+    }
+
+    // Places and guides unlock at Business (tier 2). These two collections had
+    // NO write rule at all, which meant Firestore denied every seller write and
+    // the `canPublishPlaces()` helper below was dead code — sellers on the top
+    // plan had no way to publish a place or a guide.
+    match /places/{id} {
+      allow read: if true;
+      allow create: if canPublishPlaces() && validPost(140);
+      allow update, delete: if isAdmin() || (signedIn() && resource.data.createdBy == request.auth.uid);
+    }
+    // Guides live in `articles`. Editors are the Admin SDK / console, but a
+    // Business-tier seller may publish their own article so the plan promise
+    // matches the dashboard.
+    match /articles/{id} {
+      allow read: if true;
+      allow create: if isAdmin() || (canPublishPlaces() && validPost(160));
+      allow update, delete: if isAdmin() || (signedIn() && resource.data.createdBy == request.auth.uid);
+    }
+
+    // ── Leads (quote requests) ──────────────────────────────────────────────
+    // Anonymous visitors may still request a quote (a product requirement).
+    // The previous revision allowed ANY signed-in user to update ANY lead, which
+    // let a competitor rewrite the brief, mark it won, or attach their own phone
+    // number to somebody else's lead. Updates are now participant-scoped.
+    //
+    // ⚠️ CREATE IS SERVER-ONLY (was `allow create: if true`).
+    // That rule let ANY caller — including an anonymous one — write an arbitrary
+    // lead document, including one with `ownerUid` pointing at a chosen seller and
+    // an invented phone number. It bypassed `consumeLeadOpportunity` completely,
+    // so the plan cap could be flooded for free and sellers could be flooded with
+    // forged jobs. Every lead now arrives through a trusted server route; sellers
+    // can browse previews but need a recorded credit unlock before responding.
+    match /leads/{id} {
+      allow create: if false; // trusted server (Admin SDK) only
+
+      allow read: if isAdmin() || signedIn() && (
+        resource.data.ownerUid == request.auth.uid      // matched seller
+        || resource.data.requesterUid == request.auth.uid  // the buyer
+        || (resource.data.status == 'new' && resource.data.ownerUid == null) // open pool
+      );
+
+      allow update: if signedIn() && (
+        // The buyer may edit their own request, but not reassign it.
+        (resource.data.requesterUid == request.auth.uid
+          && request.resource.data.ownerUid == resource.data.ownerUid)
+        // An already-matched seller may progress the lead, not hand it on.
+        || (resource.data.ownerUid == request.auth.uid
+          && request.resource.data.requesterUid == resource.data.requesterUid
+          && hasLeadUnlock(request.auth.uid, id)
+          // A RESOLVED request is final. The award cascade
+          // (POST /api/quotes/award) marks every rival's lead `lost`, and the
+          // server is the only writer that may do that. Without this clause a
+          // seller could drag their own closed lead back to "accepted" from the
+          // dashboard and resume chasing a job the buyer already awarded
+          // elsewhere — the exact dead-lead loop the cascade exists to end.
+          // `won` stays permitted so a seller can still mark their OWN winning
+          // lead once the work is agreed.
+          // `lostAt` is absent on every live lead — the award cascade is the only
+          // writer of that field. Reading a missing key ERRORS in security rules,
+          // and an error denies the whole clause: it 403'd the seller's own status
+          // update, so submitQuote threw BEFORE it could notify the buyer (which is
+          // why a quote saved with no bell). Guard with `in` so a missing field is a
+          // clean `true` rather than an evaluation error.
+          && (!('lostAt' in resource.data) || request.resource.data.status == 'won'))
+      );
+
+      allow delete: if false;
+    }
+
+    // ── Lead allocations (the paid-lead audit trail) ─────────────────
+    // One immutable row per lead actually SOLD to a seller, so COUNT(lead_allocations)
+    // is an INDEPENDENT check on the leads_used counter — a counter in a document can
+    // drift or be tampered with; one row per delivery cannot. Server-write-only,
+    // readable by the seller it was allocated to and by admins.
+    match /lead_allocations/{id} {
+      allow read: if isAdmin()
+        || (signedIn() && resource.data.ownerUid == request.auth.uid);
+      allow write: if false; // server (Admin SDK) only
+    }
+
+    // ── Rate-limit counters ────────────────────────────────────────────
+    // Fixed-window counters written transactionally by lib/server/rate-limit.ts.
+    // Opaque and read-only to clients on purpose: a caller who could read these
+    // could learn the exact limits, and `allow write` would let anyone clear
+    // their own counter between bursts.
+    match /rate_limits/{id} {
+      allow read, write: if false; // server (Admin SDK) only
+    }
+
+    // ── Shared seller-pool snapshot ─────────────────────────────────
+    // A derived, rebuildable cache written only by the trusted server. It holds a
+    // PROJECTION of `businesses` (only the fields matching actually reads) so the
+    // snapshot stays inside Firestore's 1 MiB document limit. Server-write-only
+    // and unreadable by clients: it is an internal accelerator, and a stale copy
+    // served to the browser would be worse than no copy at all.
+    match /seller_pool/{id} {
+      allow read, write: if false; // server (Admin SDK) only
+    }
+
+    // ── Client error reports ────────────────────────────────────────
+    // Written by POST /api/errors, which is deliberately unauthenticated: most
+    // real failures happen BEFORE sign-in, so requiring a session would blind us
+    // to exactly the crashes that matter. Defended at the route instead —
+    // per-IP rate limit, size caps, and a second scrub of every field, because a
+    // client cannot be trusted to have removed sensitive values already.
+    //
+    // Read is admin-only because a stack trace is a map of the application.
+    match /client_errors/{id} {
+      allow read: if isAdmin();
+      allow write: if false; // server (Admin SDK) only
+    }
+
+    // Daily privacy-preserving aggregate analytics. The server route writes
+    // counters; clients cannot read or tamper with them directly.
+    match /analytics_daily/{id} {
+      allow read, write: if false; // Admin SDK only
+    }
+
+    // ── Privacy erasure audit ─────────────────────────────────────────
+    // Written by POST /api/privacy/erase with COUNTS ONLY — no uid, no email, no
+    // timestamp of the request tied to a person. That is deliberate: an audit trail
+    // proving we honoured erasure must not itself become personal information
+    // about who asked. Admins read it; nobody else can.
+    match /privacy_erasures/{id} {
+      allow read: if isAdmin();
+      allow write: if false; // server (Admin SDK) only
+    }
+
+    // ── Bookings (appointments; spec §39) ────────────────────────────────────
+    // The buyer opens a request (buyerUid is pinned to the caller); only the two
+    // participants read it. Status transitions are role-pinned: the seller moves
+    // requested → confirmed/rescheduled/completed/no-show/cancelled, the buyer
+    // may only cancel their own request. Neither can change who the parties are.
+    match /bookings/{id} {
+      allow read: if isAdmin() || (signedIn() && (
+        resource.data.buyerUid == request.auth.uid
+        || resource.data.sellerUid == request.auth.uid
+      ));
+
+      allow create: if signedIn()
+        && request.resource.data.buyerUid == request.auth.uid
+        && request.resource.data.sellerUid is string
+        && request.resource.data.businessId is string
+        && request.resource.data.status == 'requested'
+        && request.resource.data.date is string
+        && request.resource.data.time is string
+        && request.resource.data.durationHours is number
+        && request.resource.data.durationHours >= 0.5
+        && request.resource.data.durationHours <= 12
+        && request.resource.data.keys().hasOnly([
+          'buyerUid', 'sellerUid', 'businessId', 'businessName', 'date', 'time',
+          'durationHours', 'note', 'status', 'createdAt', 'updatedAt'
+        ]);
+
+      allow update: if isAdmin() || (signedIn() && (
+        // Seller side: decide or complete the job.
+        (resource.data.sellerUid == request.auth.uid
+          && request.resource.data.buyerUid == resource.data.buyerUid
+          && request.resource.data.sellerUid == resource.data.sellerUid
+          && request.resource.data.businessId == resource.data.businessId
+          && request.resource.data.status in ['confirmed', 'rescheduled', 'cancelled', 'completed', 'no-show']
+          && request.resource.data.diff(resource.data).affectedKeys()
+               .hasOnly(['status', 'date', 'time', 'sellerNote', 'decidedAt', 'updatedAt']))
+        // Buyer side: cancel their own booking.
+        || (resource.data.buyerUid == request.auth.uid
+          && request.resource.data.buyerUid == resource.data.buyerUid
+          && request.resource.data.sellerUid == resource.data.sellerUid
+          && request.resource.data.businessId == resource.data.businessId
+          && request.resource.data.status in ['cancelled']
+          && request.resource.data.diff(resource.data).affectedKeys()
+               .hasOnly(['status', 'buyerNote', 'decidedAt', 'updatedAt']))
+      ));
+
+      allow delete: if false;
+    }
+
+    // ── Portfolio (seller work samples; spec §9 / §10) ───────────────────────
+    // Publicly readable because items appear on the public seller profile.
+    // Writable only by the owning seller, only while their plan or trial is
+    // active, and only with the expected field shape.
+    //
+    // NOTE: the per-plan ITEM COUNT ("10 on Starter, 50 on Professional") is not
+    // expressible in rules — rules cannot count documents. That quota is enforced
+    // by /api/portfolio with the Admin SDK, which is the only writer the UI uses.
+    match /portfolio/{id} {
+      allow read: if true;
+
+      allow create: if signedIn()
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.resource.data.businessId is string
+        && request.resource.data.title is string
+        && request.resource.data.title.size() >= 2
+        && request.resource.data.title.size() <= 120
+        && request.resource.data.description is string
+        && request.resource.data.description.size() <= 800
+        && request.resource.data.keys().hasOnly([
+          'ownerUid', 'businessId', 'title', 'description', 'completedAt',
+          'beforeUrl', 'afterUrl', 'imageUrl', 'tags', 'createdAt', 'updatedAt'
+        ])
+        && subActive(request.auth.uid);
+
+      allow update: if isAdmin() || (signedIn()
+        && resource.data.ownerUid == request.auth.uid
+        && request.resource.data.ownerUid == resource.data.ownerUid
+        && request.resource.data.businessId == resource.data.businessId
+        && subActive(request.auth.uid));
+
+      allow delete: if isAdmin() || (signedIn() && resource.data.ownerUid == request.auth.uid);
+    }
+
+    // ── Quotes (a seller's reply to a request they accepted) ─────────────────
+    // Reads: only the two participants (and admins). Creates: only the seller
+    // who already owns the lead. Updates are split by role so neither side can
+    // rewrite the other's part of the deal — a buyer can accept or decline, and
+    // nothing else; a seller can revise or withdraw their own offer.
+    match /quotes/{id} {
+      allow read: if isAdmin() || (signedIn() && (
+        resource.data.sellerUid == request.auth.uid
+        || resource.data.buyerUid == request.auth.uid
+      ));
+
+      allow create: if signedIn()
+        && request.resource.data.sellerUid == request.auth.uid
+        && request.resource.data.buyerUid is string
+        && request.resource.data.leadId is string
+        && hasLeadUnlock(request.auth.uid, request.resource.data.leadId)
+        && request.resource.data.status == 'sent'
+        && request.resource.data.price is number
+        && request.resource.data.price >= 1
+        && request.resource.data.price <= 5000000
+        && request.resource.data.keys().hasOnly([
+          'leadId', 'requestId', 'buyerUid', 'sellerUid', 'businessId', 'price', 'vatIncluded',
+          'duration', 'availability', 'message', 'inclusions', 'exclusions',
+          'warranty', 'attachments', 'status', 'createdAt', 'updatedAt'
+        ]);
+
+      allow update: if isAdmin() || (signedIn() && (
+        // Seller side: revise or withdraw their offer, never touch the buyer.
+        (resource.data.sellerUid == request.auth.uid
+          && request.resource.data.sellerUid == resource.data.sellerUid
+          && request.resource.data.buyerUid == resource.data.buyerUid
+          && request.resource.data.leadId == resource.data.leadId
+          && request.resource.data.status in ['sent', 'withdrawn', 'expired'])
+        // Buyer side: the decision, and only the decision.
+        || (resource.data.buyerUid == request.auth.uid
+          && request.resource.data.sellerUid == resource.data.sellerUid
+          && request.resource.data.buyerUid == resource.data.buyerUid
+          && request.resource.data.leadId == resource.data.leadId
+          && request.resource.data.status in ['accepted', 'declined']
+          && request.resource.data.diff(resource.data).affectedKeys()
+               .hasOnly(['status', 'buyerResponse', 'decidedAt', 'updatedAt']))
+      ));
+
+      allow delete: if false;
+    }
+
+    // ── Accounts ────────────────────────────────────────────────────────────
+    // Admins need the user list for support; profile writes stay owner-only.
+    // `role` is constrained so a client cannot invent a privileged role.
+    match /users/{uid} {
+      allow read: if isMe(uid) || isAdmin();
+
+      // CREATE (signup / the first role write). This MUST be separate from
+      // `update`: the previous single `write` rule pinned the terms-acceptance
+      // fields by comparing them against `resource.data.…`, and on a CREATE
+      // there IS no `resource` — reading a missing field ERRORS in security
+      // rules, and an error denies. So EVERY new account's first write (the
+      // role, written by signInEmail / signIn) was rejected: the UI optimistically
+      // showed "seller", the realtime listener then corrected back to no-role,
+      // and /dashboard fell back to the buyer view — registering as a seller
+      // looked exactly like doing nothing, and the dashboard appeared to flicker
+      // between the two accounts. Terms fields must simply be ABSENT here —
+      // only POST /api/legal/accept-terms (Admin SDK) may ever author them.
+      allow create: if isMe(uid)
+        && (request.resource.data.role == null || request.resource.data.role in ['buyer', 'seller'])
+        && !('termsAcceptedAt' in request.resource.data)
+        && !('termsVersion' in request.resource.data)
+        && !('consentVersion' in request.resource.data)
+        && !('termsRole' in request.resource.data);
+
+      // UPDATE — the terms-acceptance fields are PINNED. `users` is
+      // client-writable, so if a browser could write `termsAcceptedAt` /
+      // `termsVersion` itself, a forged acceptance record would be
+      // indistinguishable from a real one — and the only purpose of that record
+      // is to be evidence when someone disputes having agreed. `.get(…, null)`
+      // is used on BOTH sides so accounts that predate the terms fields (null)
+      // compare cleanly instead of erroring the whole clause.
+      allow update: if isMe(uid)
+        && (request.resource.data.role == null || request.resource.data.role in ['buyer', 'seller'])
+        // Seller identity cannot be downgraded to buyer; the messaging rule
+        // relies on this role to enforce the server-issued contact grant.
+        && (resource.data.get('role', null) != 'seller'
+          || request.resource.data.get('role', null) == 'seller')
+        && request.resource.data.get('termsAcceptedAt', null) == resource.data.get('termsAcceptedAt', null)
+        && request.resource.data.get('termsVersion', null) == resource.data.get('termsVersion', null)
+        && request.resource.data.get('consentVersion', null) == resource.data.get('consentVersion', null)
+        && request.resource.data.get('termsRole', null) == resource.data.get('termsRole', null);
+
+      allow delete: if false;
+    }
+
+    // Team membership is created and revoked by the trusted API only. Members
+    // may read their own access rows, and owners may read their roster.
+    match /team_memberships/{membershipId} {
+      allow get, list: if isAdmin() || signedIn()
+        && (resource.data.ownerUid == request.auth.uid || resource.data.memberUid == request.auth.uid);
+      allow write: if false;
+    }
+
+    // ── Claims, favourites, saved searches, saved items ─────────────────────
+    match /business_claims/{id} {
+      allow create: if signedIn() && request.resource.data.claimantUid == request.auth.uid;
+      allow read: if signedIn() && (resource.data.claimantUid == request.auth.uid || isAdmin());
+      allow update, delete: if isAdmin();
+    }
+
+    match /favorites/{id} {
+      allow read: if signedIn() && resource.data.ownerUid == request.auth.uid;
+      // `hasOnly` matters here: without it a caller could smuggle arbitrary
+      // fields into their own favourite doc. It is a whitelist, not a block.
+      allow create: if signedIn()
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.resource.data.businessId is string
+        && request.resource.data.keys().hasOnly([
+          'ownerUid', 'businessId', 'name', 'categorySlug', 'suburbSlug',
+          'citySlug', 'createdAt'
+        ]);
+      allow update: if signedIn() && resource.data.ownerUid == request.auth.uid;
+      allow delete: if signedIn() && resource.data.ownerUid == request.auth.uid;
+    }
+
+    match /saved_searches/{id} {
+      allow read: if signedIn() && resource.data.ownerUid == request.auth.uid;
+      allow create, update: if signedIn() && request.resource.data.ownerUid == request.auth.uid;
+      allow delete: if signedIn() && resource.data.ownerUid == request.auth.uid;
+    }
+
+    // Saved items (§19): unified collection for businesses, deals, events,
+    // places, guides and jobs. ONE collection feeds the header "Saved (n)"
+    // counter, SaveButton toggles and the buyer dashboard — saving a business
+    // writes here with itemType "business".
+    match /saved_items/{id} {
+      // `get` and `list` MUST be separate here. The Save button subscribes to the
+      // exact document id it is ABOUT to write, so on a first visit that document
+      // does not exist, `resource` is null, and `resource.data.ownerUid` made the
+      // whole rule error out as "insufficient permissions" — which is why nothing
+      // could be saved: not events, not deals, not businesses.
+      // The null case leaks nothing — there is no document to read, it only
+      // reveals that an id is unused.
+      allow get: if signedIn() && (resource == null || resource.data.ownerUid == request.auth.uid);
+      // A `list` always evaluates a real document, and the query is already
+      // scoped to the caller's own uid.
+      allow list: if signedIn() && resource.data.ownerUid == request.auth.uid;
+      allow create: if signedIn()
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.resource.data.itemType is string
+        && request.resource.data.itemId is string
+        && request.resource.data.keys().hasOnly([
+          "ownerUid", "itemType", "itemId", "collection", "title",
+          "businessId", "categorySlug", "suburb", "city", "slug", "createdAt"
+        ]);
+      allow update, delete: if signedIn() && resource.data.ownerUid == request.auth.uid;
+    }
+
+    // ── Notifications ───────────────────────────────────────────────────────
+    // Previously ANY signed-in user could create a notification for ANY other
+    // user ("Your payment failed…" phishing). The sender must now be the caller.
+    match /notifications/{id} {
+      allow read: if isAdmin() || (signedIn() && resource.data.toUid == request.auth.uid);
+      // On create `resource` is null, so validate the NEW document's keys only.
+      allow create: if signedIn()
+        && (request.resource.data.fromUid == request.auth.uid
+            || request.resource.data.toUid == request.auth.uid)
+        && request.resource.data.keys().hasOnly(
+          ['toUid', 'fromUid', 'type', 'message', 'businessId', 'leadId', 'href', 'read', 'createdAt']
+        );
+      allow update: if signedIn() && resource.data.toUid == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read', 'readAt']);
+      allow delete: if signedIn() && resource.data.toUid == request.auth.uid;
+    }
+
+    // Support requests contain private account and business details. Submission
+    // and staff status changes go through authenticated server routes only.
+    match /support_tickets/{id} {
+      allow read: if isAdmin() || signedIn() && resource.data.ownerUid == request.auth.uid;
+      allow write: if false;
+    }
+    match /support_rate_limits/{uid} {
+      allow read, write: if false;
+    }
+
+    // ── Abuse reports ───────────────────────────────────────────────────────
+    match /reports/{id} {
+      allow create: if signedIn() && request.resource.data.reporterUid == request.auth.uid;
+      allow read: if isAdmin() || (signedIn() && resource.data.reporterUid == request.auth.uid);
+      allow update, delete: if isAdmin();
+    }
+
+    // ── Contact grants (who may START a conversation with a buyer) ───────────
+    // Pay-per-contact would be decorative if any seller could read a buyer's
+    // uid off a lead doc and DM them directly. A grant is written ONLY by the
+    // trusted server — on a successful credit unlock, or when the buyer awards
+    // that seller a quote — so "contact the buyer" always costs something.
+    // Id: ONE doc per SELLER — contact_grants/{sellerUid} carries a
+    // `grantedTo` array of buyer uids — not one doc per pair. That shape is
+    // what lets the read rule below be a pure PATH compare: it never touches
+    // `resource.data`, so it cannot error on a missing document, and the gate
+    // behaves identically whether or not the rules engine applies a target's
+    // own rules to exists()/get(). Concurrent grants stay idempotent server-
+    // side (FieldValue.arrayUnion).
+    function grantPath(sellerUid) {
+      return /databases/$(database)/documents/contact_grants/$(sellerUid);
+    }
+    // The caller's own role — only ever called with request.auth.uid, so the
+    // read satisfies `users: allow read: if isMe(uid)` under either get()
+    // semantics. The exists() guard covers accounts with NO users doc (written
+    // during the registration-bug era): role unknown is treated as a buyer,
+    // which is exactly what the dashboard shows those accounts anyway.
+    function isSellerAccount(uid) {
+      return exists(/databases/$(database)/documents/users/$(uid))
+        && get(/databases/$(database)/documents/users/$(uid)).data.get('role', null) == 'seller';
+    }
+    // The other half of a 2-person thread. The create rule proves the caller
+    // is IN `parts` and that parts.size() == 2 BEFORE this runs — `&&`
+    // short-circuits — so this can only ever name the counterparty.
+    function threadOther(parts) {
+      return parts[0] == request.auth.uid ? parts[1] : parts[0];
+    }
+    function contactGranted(parts) {
+      // exists() guards the get(): a seller with no grant never reaches the
+      // .data read, so "no grant" denies cleanly instead of erroring.
+      return exists(grantPath(request.auth.uid))
+        && threadOther(parts) in get(grantPath(request.auth.uid)).data.get('grantedTo', []);
+    }
+    match /contact_grants/{sellerUid} {
+      // A seller reads only their own ledger; admins read all.
+      allow get: if isAdmin() || (signedIn() && request.auth.uid == sellerUid);
+      // Nothing lists this client-side, and a path variable cannot constrain
+      // a query anyway — admin-only keeps a non-admin scan impossible.
+      allow list: if isAdmin();
+      allow write: if false; // Admin SDK only (unlock + award routes)
+    }
+
+    // ─ Seller applications (§8) ────────────────────────────────────────────
+    // Seller applications: created by the seller on submit (status = "pending"),
+    // read live by the seller so the status flips when an admin approves or
+    // rejects. Only admins may change the status.
+    match /seller_applications/{uid} {
+      allow get: if isAdmin() || (signedIn() && request.auth.uid == uid);
+      allow create: if signedIn() && request.auth.uid == uid;
+      // Status transitions are admin-only: pending → approved/rejected.
+      allow update: if isAdmin()
+        && (request.resource.data.status == "approved"
+          || request.resource.data.status == "rejected");
+      allow delete: if false;
+      allow list: if isAdmin();
+    }
+
+    // ─ Seller verification requests (§8 Phase 1) ──────────────────────────
+    // One doc per seller at verification_requests/{uid}. Writes go through the
+    // server routes (verified token → Admin SDK), but the rules mirror the
+    // seller_applications shape: the owner creates with status "pending" and
+    // reads their own row live — that is how the dashboard shows the status
+    // flipping the instant an admin decides. approved/rejected is admin-only:
+    // nobody can stamp themselves verified from the client.
+    match /verification_requests/{uid} {
+      allow get: if isAdmin() || (signedIn() && request.auth.uid == uid);
+      allow create: if signedIn() && request.auth.uid == uid
+        && request.resource.data.status == "pending";
+      // The owner may only ever write status "pending" (re-submit after a
+      // rejection); flipping a decision is the admin routes' business alone.
+      allow update: if isAdmin() || (signedIn() && request.auth.uid == uid
+        && request.resource.data.status == "pending");
+      allow delete: if false;
+      allow list: if isAdmin();
+    }
+
+    // ─ Messaging (buyer ↔ seller) ──────────────────────────────────────────
+    // Only conversation participants may read or post. A message's senderUid is
+    // pinned to the caller, so nobody can send messages as another user.
+    match /conversations/{cid} {
+      // Same null-resource trap as saved_items: opening a thread whose
+      // conversation document does not exist yet must not read as a permission
+      // error, it must simply be empty.
+      allow get: if isAdmin() || (signedIn() && (resource == null || request.auth.uid in resource.data.participants));
+      allow list: if isAdmin() || (signedIn() && request.auth.uid in resource.data.participants);
+      // CREATING a thread is the gate that makes pay-per-contact real: BUYERS
+      // may start a conversation with anyone (they are the ones hiring), but a
+      // SELLER-role account may only start one with a buyer the server has
+      // authorised on their contact_grants/{sellerUid} row (written by the
+      // unlock route or the award route). Replying inside an existing thread is
+      // untouched: the buyer starts it, or the grant was bought. Without this,
+      // `requesterUid` on a lead doc plus `ensureConversation` was a free back
+      // door around the credit wallet.
+      allow create: if isAdmin() || (signedIn()
+        && request.resource.data.participants.size() == 2
+        && request.auth.uid in request.resource.data.participants
+        && (!isSellerAccount(request.auth.uid) || contactGranted(request.resource.data.participants)));
+      allow update: if signedIn() && request.auth.uid in resource.data.participants;
+      allow delete: if false;
+
+      function conv() {
+        return get(/databases/$(database)/documents/conversations/$(cid)).data;
+      }
+      match /messages/{mid} {
+        allow read: if signedIn() && request.auth.uid in conv().participants;
+        allow create: if false; // Authenticated server route enforces plan quotas and writes atomically.
+        // Only read-receipt style updates by a participant.
+        allow update: if signedIn() && request.auth.uid in conv().participants;
+        allow delete: if false;
+      }
+    }
+
+    // Seller message usage is transactionally maintained by /api/messages/send.
+    match /message_usage/{uid} {
+      allow read, write: if false;
+    }
+  }
+}

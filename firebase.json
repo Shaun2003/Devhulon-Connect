@@ -1,0 +1,17 @@
+{
+  "//": "Deploy config for the BACKEND only — Firestore rules/indexes and Storage rules. The Next.js site is deployed to Vercel, so there is deliberately NO `hosting` block here. Adding one would invite `firebase deploy --only hosting` to publish a second, stale copy of the site alongside the real deployment.",
+  "//deploy": "Run `npm run deploy:firebase` (see package.json) — it authenticates, then deploys firestore + storage together so rules and indexes can never drift apart.",
+  "firestore": {
+    "rules": "firestore.rules",
+    "indexes": "firestore.indexes.json"
+  },
+  "storage": {
+    "rules": "storage.rules"
+  },
+  "emulators": {
+    "firestore": { "port": 8080 },
+    "storage": { "port": 9199 },
+    "ui": { "enabled": true, "port": 4000 },
+    "singleProjectMode": true
+  }
+}
