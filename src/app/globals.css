@@ -1,0 +1,302 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&display=swap");
+@import "tailwindcss";
+
+/* KASI x Hippo design system — comparison-first, trust-first */
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  --color-navy-950: #0b1e33;
+  --color-navy-900: #10243e;
+  --color-navy-700: #1d3a5f;
+  --color-hippo-500: #7ac142;
+  --color-hippo-600: #68ad35;
+  --color-hippo-700: #558c2b;
+  --color-sun-400: #ffc72c;
+  --color-sun-500: #f5b400;
+  --color-mist-50: #f2f6fa;
+  --color-mist-100: #e7eef5;
+  --color-mist-200: #d6e1ec;
+}
+
+html { scroll-behavior: smooth; }
+
+body {
+  text-rendering: optimizeLegibility;
+  background: var(--color-mist-50);
+  font-family: var(--font-sans);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   RESPONSIVE FOUNDATION
+   Pages were hand-rolling `max-w-* mx-auto px-4` and drifting apart, and long
+   labels (phone numbers, addresses) forced the whole page to scroll sideways
+   on a phone. These rules make the layout contract enforced rather than
+   remembered, so every page lines up at the same gutter on both breakpoints.
+   ───────────────────────────────────────────────────────────────────────────── */
+
+/* Nothing may push the document wider than the viewport. */
+html,
+body {
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+/* Long unbreakable strings (URLs, numbers, addresses) wrap instead of
+   forcing a horizontal scrollbar. */
+body {
+  overflow-wrap: break-word;
+}
+
+/* Images and media never exceed their column. */
+img,
+svg,
+video,
+canvas {
+  max-width: 100%;
+  height: auto;
+}
+
+/* One consistent page gutter. `.page` is the standard container used by the
+   newer pages; existing pages keep their own max-w but share the padding. */
+.page {
+  width: 100%;
+  margin-inline: auto;
+  padding-inline: 1rem;
+}
+@media (min-width: 640px) {
+  .page { padding-inline: 1.5rem; }
+}
+
+.site-page {
+  width: 100%;
+  min-width: 0;
+}
+
+/* Horizontally scrollable strips (dashboard tabs, chip rows) need to actually
+   scroll on touch instead of stretching the page, and should not show a
+   permanent scrollbar on desktop. */
+.scroll-x {
+  display: flex;
+  gap: 0.5rem;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  /* Room for the focus ring so it isn't clipped while scrolling. */
+  padding-block: 0.25rem;
+}
+.scroll-x::-webkit-scrollbar { display: none; }
+.scroll-x > * { flex: 0 0 auto; }
+
+/* The header is sticky, so anchor targets must clear it when jumped to. */
+:target,
+[id] {
+  scroll-margin-top: 5.5rem;
+}
+
+/* Respect the OS "reduce motion" setting across the whole app. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Shared navy hero surface — aurora glows + soft blueprint grid overlay.
+   Every hero on the site inherits this, so inner pages match the homepage. */
+.hippo-hero,
+.hippo-hero-grid {
+  position: relative;
+  isolation: isolate;
+  background:
+    radial-gradient(900px 340px at 88% -60px, rgba(122, 193, 66, 0.4), transparent 62%),
+    radial-gradient(720px 320px at 6% 110%, rgba(255, 199, 44, 0.22), transparent 58%),
+    linear-gradient(185deg, #10243e 0%, #143152 60%, #0c1c2f 100%);
+  background-color: #10243e;
+}
+.hippo-hero::before,
+.hippo-hero-grid::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.055) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.055) 1px, transparent 1px);
+  background-size: 52px 52px;
+  -webkit-mask-image: radial-gradient(120% 100% at 50% 0%, #000 40%, transparent 100%);
+  mask-image: radial-gradient(120% 100% at 50% 0%, #000 40%, transparent 100%);
+}
+
+.hippo-card {
+  background: #fff;
+  border: 1px solid var(--color-mist-200);
+  border-radius: 1.1rem;
+  box-shadow: 0 1px 2px rgba(16, 36, 62, 0.06), 0 10px 28px -18px rgba(16, 36, 62, 0.35);
+}
+
+.btn-hippo {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  background: var(--color-hippo-500);
+  color: #0b1e33;
+  font-weight: 800;
+  border-radius: 999px;
+  padding: 0.85rem 1.6rem;
+  transition: transform 0.08s ease, background 0.15s ease, box-shadow 0.15s ease;
+  box-shadow: 0 8px 20px -10px rgba(122, 193, 66, 0.9);
+}
+.btn-hippo:hover { background: var(--color-hippo-600); color: #fff; }
+.btn-hippo:active { transform: translateY(1px); }
+
+.btn-navy {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  background: #10243e;
+  color: #fff;
+  font-weight: 800;
+  border-radius: 999px;
+  padding: 0.85rem 1.6rem;
+  transition: background 0.15s ease, transform 0.08s ease;
+}
+.btn-navy:hover { background: #1d3a5f; }
+.btn-navy:active { transform: translateY(1px); }
+
+.btn-sun {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  background: var(--color-sun-400);
+  color: #10243e;
+  font-weight: 800;
+  border-radius: 999px;
+  padding: 0.85rem 1.6rem;
+  box-shadow: 0 8px 20px -10px rgba(255, 199, 44, 0.9);
+}
+.btn-sun:hover { background: var(--color-sun-500); }
+
+.chip-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  background: #e8f6d8;
+  color: #3c6b1d;
+  border-radius: 999px;
+  padding: 0.2rem 0.6rem;
+}
+.chip-live::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: #5aa32e;
+  box-shadow: 0 0 0 4px rgba(90, 163, 46, 0.2);
+}
+
+.hippo-tab-active {
+  background: #10243e !important;
+  color: #fff !important;
+}
+
+.compare-row { transition: box-shadow 0.15s ease, border-color 0.15s ease, transform 0.15s ease; }
+.compare-row:hover { border-color: #7ac142; box-shadow: 0 14px 34px -20px rgba(16, 36, 62, 0.5); transform: translateY(-1px); }
+
+.funnel-step { position: relative; }
+.funnel-progress { height: 8px; border-radius: 999px; background: #e7eef5; overflow: hidden; }
+.funnel-progress > div { height: 100%; background: linear-gradient(90deg, #7ac142, #ffc72c); transition: width 0.3s ease; }
+
+/* ── Modern surfaces & motion ─────────────────────────────────────────── */
+
+/* Subtle blueprint grid — used behind light sections for depth. */
+.surface-grid {
+  background-image:
+    linear-gradient(rgba(16, 36, 62, 0.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(16, 36, 62, 0.045) 1px, transparent 1px);
+  background-size: 46px 46px;
+}
+
+/* `.hippo-hero-grid` is an alias of `.hippo-hero` (see the shared rule above),
+   kept so class names read explicitly where the grid overlay matters most. */
+
+.icon-3d {
+  display: grid;
+  place-items: center;
+  width: 3.5rem;
+  height: 3.5rem;
+  border-radius: 1.25rem;
+  font-size: 1.5rem;
+  line-height: 1;
+  background: linear-gradient(135deg, #ffffff 0%, #f4f8fa 50%, #e2edf5 100%);
+  border: 1px solid rgba(255, 255, 255, 0.9);
+  box-shadow:
+    -4px -4px 10px rgba(255, 255, 255, 1),
+    6px 6px 16px rgba(16, 36, 62, 0.08),
+    inset 2px 2px 4px rgba(255, 255, 255, 0.8),
+    inset -2px -2px 6px rgba(16, 36, 62, 0.03);
+  transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.2s ease;
+  color: #558c2b;
+}
+/* Size scale. `icon-3d` alone is the 3.5rem page-hero plate; the modifiers step
+   down to the 2.25rem inline plate. Every decorative icon plate on the site uses
+   one of these so they all share the hover, the light gradient and the green
+   glyph — the hand-rolled `grid place-items-center bg-[#f2f6fa]` spans this
+   replaced had none of that. */
+.icon-3d-xs { width: 2.25rem; height: 2.25rem; font-size: 1.2rem; border-radius: 0.8rem; }
+.icon-3d-sm { width: 2.5rem; height: 2.5rem; font-size: 1.35rem; border-radius: 0.9rem; }
+.icon-3d-md { width: 2.75rem; height: 2.75rem; font-size: 1.5rem; border-radius: 1rem; }
+.icon-3d-lg { width: 3.5rem; height: 3.5rem; font-size: 1.75rem; border-radius: 1.15rem; }
+.icon-3d-xl { width: 5rem; height: 5rem; font-size: 2.5rem; border-radius: 1.6rem; }
+
+/* One plate, one look. The navy variant is gone: its gradient (#1d3a5f → #10243e)
+   and its 0 8px 18px rgba(11,30,51,.9) drop shadow read as a black smudge behind
+   the glyph, which is why these plates looked heavy on every page except the
+   service cards. Everything now uses the light, green `.icon-3d` treatment and
+   lifts on hover whether or not it sits inside a `.group`. */
+.icon-3d:hover,
+.group:hover .icon-3d { transform: translateY(-3px) scale(1.04); }
+
+/* Entrance motion: fade + rise, with optional stagger via inline --d. */
+@keyframes kasirise {
+  from { opacity: 0; transform: translateY(14px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.anim-rise {
+  animation: kasirise 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation-delay: var(--d, 0ms);
+}
+
+/* Universal card hover lift — pairs with .hippo-card. */
+.hover-lift { transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease; }
+.hover-lift:hover {
+  transform: translateY(-3px);
+  border-color: #7ac142;
+  box-shadow: 0 18px 40px -24px rgba(16, 36, 62, 0.55);
+}
+
+/* Animated underline used on section links. */
+.link-underline {
+  background-image: linear-gradient(#7ac142, #7ac142);
+  background-repeat: no-repeat;
+  background-position: 0 100%;
+  background-size: 0% 2px;
+  transition: background-size 0.25s ease, color 0.2s ease;
+}
+.link-underline:hover { background-size: 100% 2px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .anim-rise, .hover-lift, .icon-3d, .link-underline { animation: none !important; transition: none !important; }
+  .hover-lift:hover { transform: none; }
+}
+
