@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, unstable_rethrow } from "next/navigation";
 import { categories, getCategory } from "@/data/categories";
 import { groupForCategory, subcategoriesFor } from "@/data/taxonomy";
 import { zaProvinces } from "@/data/za-locations";
@@ -79,6 +79,7 @@ async function loadCategoryPage(
       loadError: null,
     };
   } catch (error) {
+    unstable_rethrow(error);
     console.error("[KASI] service catalogue query failed:", error);
     return {
       list: [],
