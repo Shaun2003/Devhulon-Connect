@@ -81,20 +81,34 @@ export function warnIfAdminUnconfigured(): void {
 let app: App | null = null;
 let db: Firestore | null = null;
 let auth: Auth | null = null;
+let adminInitializationFailed = false;
+
+function logAdminInitializationFailure(service: string, error: unknown): void {
+  adminInitializationFailed = true;
+  console.error(
+    `[KASI] Firebase Admin ${service} initialization failed. Check FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, and FIREBASE_PRIVATE_KEY in the production environment.`,
+    error
+  );
+}
 
 /** Lazily initialise so a missing env var degrades gracefully instead of crashing the build. */
 function adminApp(): App | null {
   assertServer("firebase-admin");
-  if (!isAdminConfigured) return null;
+  if (!isAdminConfigured || adminInitializationFailed) return null;
   if (!app) {
-    app = getApps().length ? getApp() : initializeApp({
-      credential: cert({
+    try {
+      app = getApps().length ? getApp() : initializeApp({
+        credential: cert({
+          projectId,
+          clientEmail,
+          privateKey: normalizePrivateKey(privateKey),
+        }),
         projectId,
-        clientEmail,
-        privateKey: normalizePrivateKey(privateKey),
-      }),
-      projectId,
-    });
+      });
+    } catch (error) {
+      logAdminInitializationFailure("SDK", error);
+      return null;
+    }
   }
   return app;
 }
@@ -110,7 +124,12 @@ export function adminDb(): Firestore | null {
   if (!db) {
     const a = adminApp();
     if (!a) return null;
-    db = getFirestore(a);
+    try {
+      db = getFirestore(a);
+    } catch (error) {
+      logAdminInitializationFailure("Firestore", error);
+      return null;
+    }
   }
   return db;
 }
@@ -121,7 +140,12 @@ export function adminAuth(): Auth | null {
   if (!auth) {
     const a = adminApp();
     if (!a) return null;
-    auth = getAuth(a);
+    try {
+      auth = getAuth(a);
+    } catch (error) {
+      logAdminInitializationFailure("Auth", error);
+      return null;
+    }
   }
   return auth;
 }
