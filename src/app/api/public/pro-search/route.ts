@@ -2,6 +2,7 @@ import { clientIp, consumeRateLimit } from "@/lib/server/rate-limit";
 import { adminDb } from "@/lib/server/admin";
 import { loadSellerCandidates } from "@/lib/server/seller-search";
 
+export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(request: Request) {

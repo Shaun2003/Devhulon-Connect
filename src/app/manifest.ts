@@ -1,5 +1,5 @@
 import type { MetadataRoute } from "next";
-import { SITE_NAME, SITE_URL } from "@/lib/site";
+import { SITE_NAME } from "@/lib/site";
 
 /**
  * PWA manifest — Devhulon Connect is mobile-first (most buyers are on phones with
@@ -30,6 +30,5 @@ export default function manifest(): MetadataRoute.Manifest {
       { name: "Jobs", url: "/jobs" },
       { name: "Any area", url: "/locations" },
     ],
-    id: SITE_URL,
   };
 }

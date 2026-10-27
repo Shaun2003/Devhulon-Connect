@@ -63,9 +63,14 @@ export default async function FindProPage({
   // credentials are not configured.
   let pool: Business[] = [];
   if (initialNeed.length > 1) {
-    pool = adminDb()
-      ? await loadSellerCandidates({ need: initialNeed, place: initialPlace })
-      : await loadSellerPool();
+    try {
+      pool = adminDb()
+        ? await loadSellerCandidates({ need: initialNeed, place: initialPlace })
+        : await loadSellerPool();
+    } catch (error) {
+      console.error("[KASI] initial Find Pro search failed:", error);
+      pool = await loadSellerPool();
+    }
   }
 
   return (
