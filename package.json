@@ -8,7 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
-    "test": "node scripts/check-deploy-config.mjs && node scripts/verify-admin-runtime.cjs && node --experimental-strip-types scripts/verify-retention.ts && node --experimental-strip-types scripts/verify-seller-cache.ts && node --experimental-strip-types scripts/verify-credit-pricing.ts && node --experimental-strip-types scripts/verify-analytics.ts && node --experimental-strip-types scripts/verify-seller-pool-shards.ts",
+    "test": "node scripts/check-deploy-config.mjs && node scripts/verify-admin-runtime.cjs && node --experimental-strip-types scripts/verify-retention.ts && node --experimental-strip-types scripts/verify-seller-cache.ts && node --experimental-strip-types scripts/verify-credit-pricing.ts && node --experimental-strip-types scripts/verify-billing-policy.ts && node --experimental-strip-types scripts/verify-analytics.ts && node --experimental-strip-types scripts/verify-seller-pool-shards.ts && node --experimental-strip-types scripts/verify-lead-validation.ts && node --experimental-strip-types scripts/verify-lead-matching.ts",
     "verify": "npm run typecheck && npm run lint && npm run test",
     "check:deploy": "node scripts/check-deploy-config.mjs --require-project-id",
     "audit:links": "node audit-links.mjs",
@@ -17,6 +17,7 @@
     "predeploy:firebase": "npm run check:deploy",
     "deploy:firebase": "firebase deploy --only firestore,storage",
     "bootstrap:admin": "node scripts/bootstrap-admin.mjs",
+    "migrate:business-contacts": "node scripts/migrate-business-contacts.mjs",
     "emulators": "firebase emulators:start"
   },
   "dependencies": {
@@ -37,5 +38,10 @@
     "eslint-config-next": "^16.4.3",
     "tailwindcss": "^4",
     "typescript": "^5"
+  },
+  "overrides": {
+    "@firebase/firestore": {
+      "@grpc/grpc-js": "1.13.6"
+    }
   }
 }

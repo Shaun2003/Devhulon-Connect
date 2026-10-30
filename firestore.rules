@@ -56,7 +56,7 @@ service cloud.firestore {
         && get(teamMembershipPath(ownerUid, request.auth.uid)).data.status == 'active'
         && hasSub(ownerUid)
         && subActive(ownerUid)
-        && tier(sub(ownerUid).plan) >= 2;
+        && tier(sub(ownerUid).plan) >= 1;
     }
     function isTeamManager(ownerUid) {
       return isTeamMember(ownerUid)
@@ -83,41 +83,47 @@ service cloud.firestore {
     // Accepts BOTH the new `subscription_status` and the legacy `status` field,
     // so sellers who subscribed before the marketplace release keep working.
     function subActive(uid) {
-      return hasSub(uid) && subPeriodCurrent(uid) && (
-        sub(uid).subscription_status == 'trialing'
-        || sub(uid).subscription_status == 'active'
-        || sub(uid).subscription_status == 'past_due'
-        || sub(uid).status == 'active'
-        || (sub(uid).subscription_status == 'canceled'
-          && sub(uid).get('cancel_at_period_end', false) == true)
+      return hasSub(uid) && (
+        tier(sub(uid).plan) == 0
+        || (subPeriodCurrent(uid) && (
+          sub(uid).subscription_status == 'trialing'
+          || sub(uid).subscription_status == 'active'
+          || sub(uid).subscription_status == 'past_due'
+          || sub(uid).status == 'active'
+          || (sub(uid).subscription_status == 'canceled'
+            && sub(uid).get('cancel_at_period_end', false) == true)
+        ))
       );
     }
-    // Tier of a plan id, tolerant of the legacy free/pro/premium names.
-    //   starter/free = 0, professional/pro = 1, business/premium = 2
+    // Two tiers: Starter/free = 0; Premium and legacy paid ids = 1.
     function tier(v) {
-      return v == 'business' || v == 'premium' ? 2
-           : v == 'professional' || v == 'pro' ? 1
+      return v == 'premium' || v == 'business' || v == 'professional' || v == 'pro' ? 1
            : 0;
     }
     function servicesWithinPlan(planId) {
       return !('services' in request.resource.data)
         || (request.resource.data.services is list
-          && (tier(planId) >= 2
-            || request.resource.data.services.size() <= (tier(planId) == 1 ? 20 : 5)));
+          && (tier(planId) >= 1
+            || request.resource.data.services.size() <= 5));
     }
     function serviceAreasWithinPlan(planId) {
       return !('serviceAreas' in request.resource.data)
         || (request.resource.data.serviceAreas is list
-          && (tier(planId) >= 2
-            || request.resource.data.serviceAreas.size() <= (tier(planId) == 1 ? 2 : 1)));
+          && (tier(planId) >= 1
+            || request.resource.data.serviceAreas.size() <= 1));
     }
     function profileFieldsWithinPlan(planId) {
-      return (request.resource.data.get('whatsapp', '') == '' || tier(planId) >= 1)
-        && (request.resource.data.get('website', '') == '' || tier(planId) >= 1)
-        && (request.resource.data.get('coverImageUrl', '') == '' || tier(planId) >= 1)
-        && (request.resource.data.get('photos', []) == resource.data.get('photos', []) || tier(planId) >= 1)
-        && (request.resource.data.get('facebook', '') == '' || tier(planId) >= 2)
-        && (request.resource.data.get('instagram', '') == '' || tier(planId) >= 2);
+      return !('phone' in request.resource.data)
+        && !('email' in request.resource.data)
+        && !('whatsapp' in request.resource.data)
+        && !('website' in request.resource.data)
+        && !('facebook' in request.resource.data)
+        && !('instagram' in request.resource.data)
+        && !('address' in request.resource.data)
+        && (request.resource.data.get('photos', []) is list
+          && (tier(planId) >= 1 || request.resource.data.get('photos', []).size() <= 10))
+        && (request.resource.data.get('facebook', '') == '' || tier(planId) >= 1)
+        && (request.resource.data.get('instagram', '') == '' || tier(planId) >= 1);
     }
     // A seller may only claim a plan at or below the tier they actually pay for,
     // which stops a Starter seller writing plan: "business" onto their listing.
@@ -135,6 +141,11 @@ service cloud.firestore {
     match /payments/{id} {
       allow read: if signedIn() && (resource.data.ownerUid == request.auth.uid || isAdmin());
       allow write: if false; // Admin SDK only (checkout + webhook)
+    }
+
+    // Reusable processor authorizations must never be readable by the browser.
+    match /billing_methods/{uid} {
+      allow read, write: if false; // Admin SDK only
     }
 
     // ── Credit wallet (marketplace pay-per-contact) ─────────────────────────
@@ -258,14 +269,14 @@ service cloud.firestore {
             && request.resource.data.verification == resource.data.verification
             && request.resource.data.get('featured', false) == resource.data.get('featured', false)
             && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-              'name', 'categorySlug', 'suburbSlug', 'citySlug', 'phone', 'address',
+              'name', 'categorySlug', 'suburbSlug', 'citySlug',
               'hours', 'description', 'priceNote', 'services', 'serviceAreas',
-              'whatsapp', 'website', 'facebook', 'instagram', 'coverImageUrl',
+              'coverImageUrl',
               'photos', 'updatedAt'
             ])
             && (isTeamManager(resource.data.ownerUid)
               || request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-                'name', 'categorySlug', 'suburbSlug', 'citySlug', 'phone', 'address',
+                'name', 'categorySlug', 'suburbSlug', 'citySlug',
                 'hours', 'description', 'priceNote', 'services', 'serviceAreas', 'updatedAt'
               ]))
             && servicesWithinPlan(resource.data.get('plan', 'starter'))
@@ -276,6 +287,13 @@ service cloud.firestore {
         || savesCounterOk();
 
       allow delete: if signedIn() && (resource.data.ownerUid == request.auth.uid || isAdmin());
+    }
+
+    // Business phone, email, WhatsApp and website are private seller settings.
+    // Only the Admin SDK can read or write this collection; the authenticated
+    // owner/editor API verifies the caller before returning or changing contacts.
+    match /business_contacts/{businessId} {
+      allow read, write: if false;
     }
 
     match /business_reviews/{id} {
@@ -321,56 +339,55 @@ service cloud.firestore {
     function paidSeller(minTier) {
       return isSeller() && subActive(request.auth.uid) && tier(sub(request.auth.uid).plan) >= minTier;
     }
-    // Jobs, events and deals unlock at Professional (tier 1); places/guides at Business (tier 2).
-    function canPublishFeed() { return paidSeller(1); }
-    function canPublishPlaces() { return paidSeller(2); }
+    // Both plans can publish core feed content; paid promotion remains gated.
+    function canPublishFeed() { return paidSeller(0); }
+    function canPublishPlaces() { return paidSeller(0); }
 
-    // A post must declare its own author and carry a bounded title.
-    function validPost(titleMax) {
+    // A post must declare its own author and a non-empty title.
+    function validPost() {
       return request.resource.data.createdBy == request.auth.uid
         && request.resource.data.title is string
         && request.resource.data.title.size() > 0
-        && request.resource.data.title.size() <= titleMax
         && request.resource.data.get('featured', false) != true;
     }
 
     match /jobs/{id} {
       allow read: if true;
-      allow create: if canPublishFeed() && validPost(120);
+      allow create: if canPublishFeed() && validPost();
       allow update: if isAdmin() || (signedIn() && resource.data.createdBy == request.auth.uid
         && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['featured']));
       allow delete: if isAdmin() || (signedIn() && resource.data.createdBy == request.auth.uid);
     }
     match /events/{id} {
       allow read: if true;
-      allow create: if canPublishFeed() && validPost(140);
+      allow create: if canPublishFeed() && validPost();
       allow update: if isAdmin() || (signedIn() && resource.data.createdBy == request.auth.uid
         && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['featured']));
       allow delete: if isAdmin() || (signedIn() && resource.data.createdBy == request.auth.uid);
     }
     match /deals/{id} {
       allow read: if true;
-      allow create: if canPublishFeed() && validPost(140);
+      allow create: if canPublishFeed() && validPost();
       allow update: if isAdmin() || (signedIn() && resource.data.createdBy == request.auth.uid
         && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['featured']));
       allow delete: if isAdmin() || (signedIn() && resource.data.createdBy == request.auth.uid);
     }
 
-    // Places and guides unlock at Business (tier 2). These two collections had
+    // Places and guides are core listing features. These two collections had
     // NO write rule at all, which meant Firestore denied every seller write and
     // the `canPublishPlaces()` helper below was dead code — sellers on the top
     // plan had no way to publish a place or a guide.
     match /places/{id} {
       allow read: if true;
-      allow create: if canPublishPlaces() && validPost(140);
+      allow create: if canPublishPlaces() && validPost();
       allow update, delete: if isAdmin() || (signedIn() && resource.data.createdBy == request.auth.uid);
     }
     // Guides live in `articles`. Editors are the Admin SDK / console, but a
-    // Business-tier seller may publish their own article so the plan promise
+    // A seller may publish their own article so the plan promise
     // matches the dashboard.
     match /articles/{id} {
       allow read: if true;
-      allow create: if isAdmin() || (canPublishPlaces() && validPost(160));
+      allow create: if isAdmin() || (canPublishPlaces() && validPost());
       allow update, delete: if isAdmin() || (signedIn() && resource.data.createdBy == request.auth.uid);
     }
 
@@ -500,10 +517,14 @@ service cloud.firestore {
         && request.resource.data.businessId is string
         && request.resource.data.status == 'requested'
         && request.resource.data.date is string
+        && request.resource.data.date.matches('^\\d{4}-\\d{2}-\\d{2}$')
         && request.resource.data.time is string
+        && request.resource.data.time.matches('^\\d{2}:\\d{2}$')
         && request.resource.data.durationHours is number
         && request.resource.data.durationHours >= 0.5
         && request.resource.data.durationHours <= 12
+        && request.resource.data.note is string
+        && request.resource.data.note.size() <= 500
         && request.resource.data.keys().hasOnly([
           'buyerUid', 'sellerUid', 'businessId', 'businessName', 'date', 'time',
           'durationHours', 'note', 'status', 'createdAt', 'updatedAt'

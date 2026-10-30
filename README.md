@@ -1,6 +1,6 @@
-# KASI — local search for Pretoria (Next.js + Firebase)
+# DevhulonConnect — local services marketplace (Next.js + Firebase)
 
-## Getting Started (KASI)
+## Getting Started (DevhulonConnect)
 
 ```bash
 npm install
@@ -21,18 +21,29 @@ npm run dev   # http://localhost:3000
 - Anonymous visitors may **only bump counters** (`profileViews`, `phoneClicks`, `whatsappClicks`, `websiteClicks`, `reviewCount`) — any other field change is denied.
 - Leads: sellers can browse contact-stripped request previews; every contact unlock costs credits.
   Inbox status changes and quotes require a recorded unlock.
+- Public business profiles do not expose phone numbers, WhatsApp numbers, email addresses,
+  websites or street addresses. These private seller contacts live in the server-only
+  `business_contacts` collection and are managed through authenticated APIs. Buyers request
+  quotes through DevhulonConnect; buyer lead contacts remain protected until an authorised
+  seller unlocks that specific request.
+- Before deploying this privacy change to an existing Firebase project, run
+  `npm run migrate:business-contacts` with credentials for the intended project to
+  review its dry-run counts. Applying requires an explicit `--apply`, matching
+  `--project-id=<id>` and `--confirm-project=<id>`. The one-time migration moves
+  legacy contact fields out of public business records and clears cached seller-pool
+  records; it never prints contact values.
 - Subscriptions, wallets, credit ledgers, unlock records and lead contacts are server-written.
 - Seller signup uses a seven-step saved onboarding flow: account, required email/optional SMS verification, business, services/areas, profile/portfolio, plan and dashboard activation. Progress is stored privately on the user's document; passwords are never included in onboarding drafts. The server checks verified-email claims before onboarding checkout and profile activation.
 
-Collections: provinces, cities, suburbs, categories, businesses, business_reviews, jobs, events, deals, articles, leads, lead_contacts, lead_unlocks, quotes, conversations (with a nested messages subcollection), message_usage, team_memberships, support_tickets, business_claims, favorites, saved_searches, notifications, reports, payments, subscriptions, users.
+Collections: provinces, cities, suburbs, categories, businesses, business_contacts, business_reviews, jobs, events, deals, articles, leads, lead_contacts, lead_unlocks, quotes, conversations (with a nested messages subcollection), message_usage, team_memberships, support_tickets, business_claims, favorites, saved_searches, notifications, reports, payments, subscriptions, billing_methods (server-only Paystack authorization records), users.
 
 Marketplace lifecycle (spec §64): lead preview → seller spends credits to **unlock contact** → seller **accepts** → seller **sends a quote** (`quotes/{id}`) → buyer **compares** at `/compare-quotes` → buyer accepts → lead `won` → review. Unlocks are keyed by the shared request ID, so matched inbox copies and marketplace previews cannot charge twice; existing per-lead unlocks remain recognized. Messaging lives at `/messages` (one thread per buyer+seller+business, deterministic id); seller sends go through an authenticated transaction that enforces the Starter monthly allowance. Rules for `quotes` and `conversations`/`messages` are in `firestore.rules` — republish them in Firebase Console → Firestore → Rules after pulling.
 
-Portfolio + service areas (spec §9/§10): portfolio items live in `portfolio/{id}` (public read, owner-only writes, plan entitlement checked in rules). The per-plan **item count** (10 Starter / 50 Professional / ∞ Business) cannot be expressed in rules (rules can't count docs), so it is enforced server-side by `POST/PATCH/DELETE /api/portfolio` (Admin SDK + subscription doc). Service areas (`businesses/{id}.serviceAreas`) are set through `PATCH /api/business`, which enforces the plan's area cap (1 Starter / 2 Professional / ∞ Business); the seller onboarding creation endpoint applies the same cap while atomically creating the listing and optional first portfolio item. Both routes require the caller's Firebase ID token; `POST /api/billing`-style env config (`FIREBASE_*` service account) must be set for them to work.
+Portfolio + service areas (spec §9/§10): portfolio items live in `portfolio/{id}` (public read, owner-only writes, plan entitlement checked in rules). The per-plan **item count** (10 Starter / unlimited Premium) cannot be expressed in rules (rules can't count docs), so it is enforced server-side by `POST/PATCH/DELETE /api/portfolio` (Admin SDK + subscription doc). Service areas (`businesses/{id}.serviceAreas`) are set through `PATCH /api/business`, which enforces the plan's area cap (1 Starter / unlimited Premium); the seller onboarding creation endpoint applies the same cap while atomically creating the listing and optional first portfolio item. Both routes require the caller's Firebase ID token; `POST /api/billing`-style env config (`FIREBASE_*` service account) must be set for them to work.
 
 Bookings (spec §39): buyers request a date/time on a business profile (`bookings/{id}`, buyerUid pinned by rules); the seller confirms / reschedules / completes / marks no-show / cancels from the seller hub's **Bookings** tab; the buyer can cancel while it's live. Role-pinned field sets in `firestore.rules` keep each side from editing the other's fields. After completion, the buyer can leave a review (§20).
 
-Seller analytics (spec §36): the hub's **Analytics** tab computes real metrics from the rows the seller can already read (leads/quotes/bookings with 30-day windows and a 6-week SVG trend chart) plus the rules-protected counters on the business doc (`profileViews`, `phoneClicks`, `whatsappClicks`, `websiteClicks`, and the new `saves` counter bumped ±1 by `toggleFavorite`). Overview is Starter-level (`basicAnalytics`); the weekly chart + conversion funnel gate on `advancedAnalytics` (Professional/Business) with an upgrade panel — never a broken screen (§60).
+Seller analytics (spec §36): the hub's **Analytics** tab computes real metrics from the rows the seller can already read (leads/quotes/bookings with 30-day windows and a 6-week SVG trend chart) plus the rules-protected counters on the business doc (`profileViews`, `phoneClicks`, `whatsappClicks`, `websiteClicks`, and the new `saves` counter bumped ±1 by `toggleFavorite`). Overview is Starter-level (`basicAnalytics`); the weekly chart + conversion funnel gate on Premium's `advancedAnalytics` with an upgrade panel — never a broken screen (§60).
 
 > If a feed shows "Firestore rules are blocking this feed", re-publish the rules file and reload.
 > Deploy `firestore.indexes.json` as well (`firebase deploy --only firestore:indexes`):
@@ -334,19 +345,52 @@ Manual trigger:
 curl -H "Authorization: Bearer $CRON_SECRET" https://<domain>/api/cron/retention
 ```
 
-### Included plan credits
+### Starter, Premium and credits
 
-Paid Starter includes **35 credits/month**, Professional **75/month**, and
-Business **200/month**. Credits are added to the seller's wallet after the first
-confirmed payment for a plan, then replenished monthly while the subscription is
-entitled. This monthly schedule also applies to annual billing. The 7-day Starter
-trial does not include credits; its first allocation is granted after the first
-paid Starter payment.
+`src/lib/plans.ts` is the plan source of truth. Starter is free and includes 35
+credits per monthly allocation period, with up to 3 unique eligible lead
+opportunities in that period. Premium is R300/month (or R3,000 for the currently
+configured annual checkout), includes 300 credits per paid monthly allocation,
+and has no fixed monthly opportunity limit. Annual Premium is charged upfront;
+its included credits are allocated monthly while the paid period remains active.
+
+An opportunity is counted once for a unique request successfully allocated to
+that seller; repeat views and notifications do not count again. Unlocking a lead
+spends the displayed credits, not another opportunity. Starter remains capped at
+3 opportunities even when the seller buys extra credits. Included monthly credits
+do not roll over; purchased credits are held in a separate balance and survive a
+Premium expiry or downgrade.
+
+Purchased credits cost R2 each. Lead contact unlocks cost at least 10 credits
+(R20) for a small job; larger requests cost 20 credits (R40), 40 credits (R80),
+or 80 credits (R160) based on the request's estimated project value. If no buyer
+budget is supplied, the request description is used to estimate its tier.
+Sellers see both the credit and rand cost before unlocking.
+
+Premium checkout can be one-time or explicitly opted-in automatic renewal through
+Paystack. Reusable authorization codes are stored in the server-only
+`billing_methods` collection and are never exposed to clients. `/api/cron/billing-renewals`
+charges due renewals daily, verifies successful charges, applies idempotent plan
+and credit updates, and retries failures after one day and three days (three
+attempts maximum). The billing page can turn off renewal; cancellation preserves
+access through the paid period. Yoco and Paystack checkouts without opt-in remain
+one-time payments. At the end of a paid period without a confirmed extension, the
+effective plan returns to Starter. Existing listings, leads, quotes, reviews,
+conversations and purchased credits are preserved.
 
 `GET|POST /api/cron/plan-credits` runs daily (Vercel Cron, `vercel.json`, 04:23).
 Each monthly allocation updates the wallet, credit ledger, and next grant date in
 one transaction. The deterministic ledger record makes retries safe. It shares
 the retention sweep's `CRON_SECRET` and also fails closed if the secret is unset.
+
+`GET|POST /api/cron/billing-renewals` runs daily (04:10 UTC), before the 04:23
+plan-credit expiry/downgrade job, and uses the same
+`CRON_SECRET`. An ambiguous provider response is reconciled against Paystack before
+another charge is attempted, preventing duplicate renewal charges. Refund webhooks
+revoke unspent purchased credits, or unused credits for the currently refunded
+subscription period; a ledger row records amounts revoked and any purchased-credit
+shortfall caused by credits already spent. Partial refunds are marked for manual
+review rather than automatically revoking the full credit amount.
 
 Manual trigger:
 
@@ -418,18 +462,19 @@ than 1–2 slots per page — Google penalises ads that outweigh content).
 
 ### Subscription plan benefits
 
-`src/lib/plans.ts` is the source of truth for Starter (R199/month),
-Professional (R399/month), and Business (R799/month), including annual prices,
-credits, feature gates, and quotas. Paid activations grant 35 / 75 / 200 credits
-respectively, then `/api/cron/plan-credits` replenishes them monthly.
+`src/lib/plans.ts` is the source of truth for Starter (free) and Premium
+(R300/month; R3,000/year in the current configuration), including included
+credits, feature gates, and quotas. Confirmed Premium payments grant 300 credits
+for the applicable allocation; `/api/cron/plan-credits` processes due monthly
+allocations and Starter refills.
 
 Plan-gated capabilities are applied in the seller dashboard and their server
 routes: service and portfolio quotas, monthly lead opportunities, a
-50-per-UTC-month Starter seller-message allowance (Professional and Business are
-unlimited), analytics, featured profile/deal/event placements, plan-ranked
-visibility and priority leads, Business team seats, Business lead CSV export (buyer contact details are
+50-per-UTC-month Starter seller-message allowance (Premium is unlimited),
+analytics, featured profile/deal/event placements, plan-ranked visibility and
+priority leads, Premium team seats, Premium lead CSV export (buyer contact details are
 included only for unlocked leads), and priority-marked support tickets with an
-admin queue. Business listing and service-area limits are also checked by the
+admin queue. Listing and service-area limits are also checked by the
 server on create/edit. CSV exports include all matching leads and protect
 spreadsheet cells from formula execution.
 
@@ -437,9 +482,9 @@ Subscription credits and benefits are code-complete only after the updated
 Firestore rules, Firebase/Vercel environment, and cron configuration have been
 deployed. Production payment-provider configuration remains environment-specific.
 
-## Hippo-style comparison ("Compare side-by-side")
+## Side-by-side business comparison
 `src/components/ComparisonTable.tsx` renders a feature×price matrix (rating,
-services, price, hours, Call/WhatsApp/Quote) on every suburb+category page.
+services, price, hours and Request a Quote) on every suburb+category page.
 The design system lives in `globals.css` (`.hippo-hero`, `.hippo-card`,
 `.btn-hippo`, `.btn-navy`, `.btn-sun`) and `@theme` colours — navy `#10243e`,
 hippo green `#7ac142`, sun yellow `#ffc72c`, mist `#f2f6fa`.
@@ -502,7 +547,7 @@ Vercel for production.
 | --- | --- |
 | `FIREBASE_PROJECT_ID` / `FIREBASE_CLIENT_EMAIL` / `FIREBASE_PRIVATE_KEY` | ~10 route handlers return **503**. Every page still renders, so this looks healthy while every form fails. The server logs a loud one-time warning naming the missing vars. |
 | `NEXT_PUBLIC_FIREBASE_*` web settings, including `NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET` | Firebase client features cannot connect to the intended project; uploads also fail if the configured Storage bucket does not exist. |
-| `CRON_SECRET` | `/api/cron/retention` and `/api/cron/plan-credits` fail **closed** (503, never 200) — retention and monthly credit replenishment stop. Intended. |
+| `CRON_SECRET` | `/api/cron/retention`, `/api/cron/plan-credits` and `/api/cron/billing-renewals` fail **closed** (503, never 200) — scheduled maintenance and billing renewals stop. Intended. |
 | `PAYMENT_PROVIDER` and the matching live provider secret | Seller checkout cannot complete without a supported payment provider. Use test keys only in staging; configure the matching production webhook before accepting live payments. |
 | `RESEND_API_KEY` and a verified `EMAIL_FROM` sender | Transactional email stays in dry-run mode without a Resend key; production notifications will not reach users. |
 | `NEXT_PUBLIC_SITE_URL` / `NEXT_PUBLIC_CONTACT_EMAIL` | The code has defaults, but confirm and explicitly set the intended public domain and monitored contact address before launch. |

@@ -1,6 +1,14 @@
 {
   "indexes": [
     {
+      "collectionGroup": "subscriptions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "auto_renew", "order": "ASCENDING" },
+        { "fieldPath": "next_renewal_at", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "businesses",
       "queryScope": "COLLECTION",
       "fields": [
