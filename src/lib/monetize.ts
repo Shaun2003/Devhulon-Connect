@@ -1,14 +1,13 @@
 /**
  * Plan compatibility layer.
  *
- * The plan model now lives in `@/lib/plans` (Starter / Professional / Business,
- * monthly + annual, 7-day trial, lead allowances). This module is the bridge for
+ * The plan model now lives in `@/lib/plans` (Starter / Premium, monthly + annual
+ * billing, free Starter access and plan entitlements). This module is the bridge for
  * the components written against the old FREE / PRO / PREMIUM model, so they keep
  * compiling and — more importantly — keep the *same tier semantics*:
  *
- *   free    → Starter      (now with a 7-day trial instead of a permanent free tier)
- *   pro     → Professional (R199 → R399)
- *   premium → Business     (R499 → R799)
+ *   free    → Starter
+ *   pro / professional / business → Premium (legacy ids)
  *
  * ⚠️ IMPORTANT: `subscribeSeller` used to write `subscriptions/{uid}` directly
  * from the browser, which let any signed-in user grant themselves the top plan
@@ -26,7 +25,6 @@ import {
   PLANS,
   PLAN_RANK,
   formatZAR,
-  getPlan,
   hasCap,
   normalizePlanId,
   planRank,
@@ -71,8 +69,6 @@ export type CheckoutResult = {
   plan: PlanId;
   /** Hosted checkout URL to send the browser to. */
   url?: string;
-  /** True when the 7-day trial was started instead of a payment. */
-  trial?: boolean;
   demo?: boolean;
   message?: string;
 };
@@ -95,7 +91,7 @@ async function billingFetch(path: string, init: RequestInit & { token: string })
 /**
  * Start an upgrade for the signed-in seller.
  *
- * - Legacy "free" → starts the 7-day trial via the server.
+ * - Starter / legacy "free" → activates the free plan via the server.
  * - Paid plans → creates a hosted checkout and returns its `url` for redirect.
  *
  * The second parameter is accepted and ignored: it used to be the owner uid taken
@@ -104,7 +100,7 @@ async function billingFetch(path: string, init: RequestInit & { token: string })
 export async function subscribeSeller(
   plan: Plan,
   _legacyOwnerUid?: string,
-  opts?: { period?: BillingPeriod; onboarding?: boolean }
+  opts?: { period?: BillingPeriod; onboarding?: boolean; autoRenew?: boolean }
 ): Promise<CheckoutResult> {
   const planId = normalizePlanId(plan);
   const period: BillingPeriod = opts?.period === "annual" ? "annual" : "monthly";
@@ -112,25 +108,21 @@ export async function subscribeSeller(
   const token = await idToken();
   if (!token) throw new Error("Sign in to choose a plan.");
 
-  // Legacy "free" mapped to Starter's trial rather than a permanent free tier.
-  if (plan === "free") {
+  if (planId === "starter") {
     const res = await billingFetch("/api/billing", {
       method: "POST",
       token,
-      body: JSON.stringify({ action: "start-trial", onboarding: Boolean(opts?.onboarding) }),
+      body: JSON.stringify({ action: "activate-starter", onboarding: Boolean(opts?.onboarding) }),
     });
     const json = (await res.json()) as { ok?: boolean; error?: string };
-    if (json.ok) {
-      const name = getPlan(planId)?.name ?? "Starter";
-      return { ok: true, plan: planId, trial: true, message: `Your ${name} trial has started — 7 days free.` };
-    }
-    return { ok: false, plan: planId, message: json.error ?? "Could not start the trial." };
+    if (json.ok) return { ok: true, plan: planId, message: "Your free Starter plan is active." };
+    return { ok: false, plan: planId, message: json.error ?? "Could not activate Starter." };
   }
 
   const res = await billingFetch("/api/billing/checkout", {
     method: "POST",
     token,
-    body: JSON.stringify({ planId, period, onboarding: Boolean(opts?.onboarding) }),
+    body: JSON.stringify({ planId, period, onboarding: Boolean(opts?.onboarding), autoRenew: opts?.autoRenew === true }),
   });
   const json = (await res.json()) as { ok?: boolean; url?: string; error?: string };
   if (!res.ok || !json.ok || !json.url) {

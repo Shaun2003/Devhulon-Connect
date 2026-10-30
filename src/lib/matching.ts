@@ -213,18 +213,24 @@ export function matchPros(query: MatchQuery, pool: Business[] = NO_SELLERS): Mat
   const place = resolvePlace(query.place ?? "");
   const terms = keywords(need);
 
-  const inferredCategory = query.categorySlug ?? matchCategory(need)?.slug;
   const explicitGroup = SERVICE_GROUPS.some((group) => group.slug === query.serviceGroupSlug)
     ? query.serviceGroupSlug
     : undefined;
+  const requestedCategory = categories.some((category) => category.slug === query.categorySlug)
+    ? query.categorySlug
+    : matchCategory(need)?.slug;
+  const explicitGroupInfo = explicitGroup ? SERVICE_GROUPS.find((group) => group.slug === explicitGroup) : undefined;
+  const isGroupLabel = Boolean(explicitGroupInfo && (
+    norm(need) === norm(explicitGroupInfo.name)
+    || norm(need) === norm(explicitGroupInfo.slug.replace(/-/g, " "))
+  ));
+  const inferredCategory = isGroupLabel && !query.categorySlug ? undefined : requestedCategory;
+  if (explicitGroup && inferredCategory && CATEGORY_GROUPS[inferredCategory] !== explicitGroup) return [];
+
   const selectedGroup = explicitGroup ?? (inferredCategory ? CATEGORY_GROUPS[inferredCategory] : undefined);
-  const wantedCategory = explicitGroup && CATEGORY_GROUPS[inferredCategory ?? ""] !== explicitGroup
-    ? undefined
-    : inferredCategory;
+  const wantedCategory = inferredCategory;
   const cat = wantedCategory ? getCategory(wantedCategory) : undefined;
   const groupSlug = selectedGroup ?? (wantedCategory ? CATEGORY_GROUPS[wantedCategory] : undefined);
-  const hasExactCategory = Boolean(wantedCategory) &&
-    pool.some((business) => business.categorySlug === wantedCategory);
 
   const out: MatchedPro[] = [];
   // A province ("plumbers in Gauteng") is a coarser location than a suburb but
@@ -234,17 +240,10 @@ export function matchPros(query: MatchQuery, pool: Business[] = NO_SELLERS): Mat
   const province = resolveProvince(query.place ?? "");
 
   for (const b of pool) {
-    // A detected trade narrows group matches to that trade when available.
-    // Without a detected trade, the selected top-level service group is the
-    // matching scope and keyword relevance determines the order.
     const isExact = b.categorySlug === wantedCategory;
     const isSameGroup = Boolean(groupSlug) && CATEGORY_GROUPS[b.categorySlug] === groupSlug;
     const broadGroupMatch = Boolean(explicitGroup && !wantedCategory);
-    if (hasExactCategory && !isExact) continue;
-    if (!isExact && !isSameGroup) continue;
-    // For inferred trades, sibling categories need a keyword hit. A top-level
-    // group selection without a detected trade can match any provider in it.
-    if (!isExact && !terms.length && !broadGroupMatch) continue;
+    if (wantedCategory ? !isExact : !isSameGroup) continue;
 
     const bCat = getCategory(b.categorySlug);
     const haystack = norm(

@@ -19,9 +19,9 @@ function env(key: string, fallback: string): string {
 }
 
 export const SITE_URL = env("NEXT_PUBLIC_SITE_URL", "https://devhulonconnect.co.za").replace(/\/$/, "");
-export const SITE_NAME = env("NEXT_PUBLIC_SITE_NAME", "Devhulon Connect");
+export const SITE_NAME = env("NEXT_PUBLIC_SITE_NAME", "DevhulonConnect");
 /** Short form for tight UI slots (nav, chips, meta titles). */
-export const SITE_SHORT = env("NEXT_PUBLIC_SITE_SHORT", "Devhulon Connect");
+export const SITE_SHORT = env("NEXT_PUBLIC_SITE_SHORT", "DevhulonConnect");
 /** Registered legal entity, used on invoices and the terms footer. */
 export const SITE_LEGAL = env("NEXT_PUBLIC_SITE_LEGAL", "Devhulon Business and People Solutions (Pty) Ltd");
 export const CONTACT_EMAIL = env("NEXT_PUBLIC_CONTACT_EMAIL", "Info@devhulonconnect.co.za");

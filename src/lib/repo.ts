@@ -2,7 +2,7 @@ import { hasCap } from "@/lib/monetize";
 import type { VerificationMethod } from "@/lib/verification";
 import { cleanQuoteDraft, normalizeQuoteStatus, validateQuote, QUOTE_STATUS_LABEL, type QuoteDraft } from "./quotes";
 import { conversationId, cleanBody, previewText, validateMessage, type Conversation, type MessageKind } from "./messages";
-import { cleanPortfolioDraft, cleanServiceAreas, validatePortfolioDraft, type PortfolioDraft } from "./portfolio";
+import { cleanPortfolioDraft, cleanServiceAreas, isHttpUrl, validatePortfolioDraft, type PortfolioDraft } from "./portfolio";
 import { bookingToday, bookingWhen, canTransition, cleanBookingDraft, normalizeBookingStatus, validateBooking, BOOKING_STATUS_LABEL } from "./bookings";
 import {
   collection, doc, getDoc, getDocs, query, where, limit,
@@ -398,7 +398,7 @@ export async function removeBusinessPhotoLink(businessId: string, url: string): 
  * SERVER-SIDE (POST /api/business). This used to `setDoc` straight from the
  * browser, which made two advertised plan promises unenforceable: Firestore rules
  * cannot COUNT documents, so nothing stopped one account creating unlimited
- * listings, and `limitsFor(plan).services` (5 on Starter, 20 on Professional)
+ * listings, and `limitsFor(plan).services` (5 on Starter, unlimited on Premium)
  * was never read by any server code at all. Both quotas are now counted on the
  * server, from the server-owned subscription doc.
  *
@@ -409,7 +409,7 @@ export async function removeBusinessPhotoLink(businessId: string, url: string): 
 export async function createBusiness(input: Record<string, unknown>) {
   if (!auth?.currentUser) throw new Error("Sign in as a seller to list a business.");
   if (input.consent !== true) {
-    throw new Error("Please confirm you're happy for your business contact details to be published on this listing.");
+    throw new Error("Please confirm you agree to store your business contact details for marketplace enquiries.");
   }
   const json = await apiPost("/api/business", { ...input }, { auth: "required" });
   return { ok: true as const, id: String(json.id ?? "") };
@@ -429,19 +429,47 @@ function cleanStr(v: unknown, max: number): string {
   return String(v ?? "").trim().slice(0, max);
 }
 
-export async function submitJob(input: { title: string; company: string; suburb: string; type: string; pay: string }) {
+function cleanPostText(v: unknown): string {
+  return String(v ?? "").trim();
+}
+
+function validDateOnly(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+}
+
+function todayInSouthAfrica(): string {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Africa/Johannesburg",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+  const part = (type: Intl.DateTimeFormatPartTypes) => parts.find((item) => item.type === type)?.value ?? "";
+  return `${part("year")}-${part("month")}-${part("day")}`;
+}
+
+export async function submitJob(input: { title: string; company: string; suburb: string; type: string; pay: string; detail: string }) {
   const d = must();
   const uid = auth?.currentUser?.uid;
   if (!uid) throw new Error("Sign in to post a job.");
-  const title = cleanStr(input.title, 120);
-  const company = cleanStr(input.company, 90);
-  if (!title || !company) throw new Error("Job title and company are required.");
+  const title = cleanPostText(input.title);
+  const company = cleanPostText(input.company);
+  const suburb = cleanPostText(input.suburb);
+  const type = cleanPostText(input.type);
+  const pay = cleanPostText(input.pay);
+  const detail = cleanPostText(input.detail);
+  if (title.length < 3 || company.length < 2 || suburb.length < 2 || !type || pay.length < 2 || detail.length < 30) {
+    throw new Error("Add a clear job title, employer, location, employment type, pay details, and at least 30 characters describing the work and how to apply.");
+  }
   const ref = await addDoc(collection(d, "jobs"), {
     title,
     company,
-    suburb: cleanStr(input.suburb, 60) || "South Africa",
-    type: cleanStr(input.type, 40) || "Full-time",
-    pay: cleanStr(input.pay, 60) || "Negotiable",
+    suburb,
+    type,
+    pay,
+    detail,
     createdBy: uid,
     // Published immediately, NOT "pending".
     //
@@ -462,18 +490,26 @@ export async function submitJob(input: { title: string; company: string; suburb:
   return { ok: true as const, id: ref.id };
 }
 
-export async function submitEvent(input: { title: string; venue: string; suburb: string; date: string; fee: string }) {
+export async function submitEvent(input: { title: string; venue: string; suburb: string; date: string; fee: string; detail: string }) {
   const d = must();
   const uid = auth?.currentUser?.uid;
   if (!uid) throw new Error("Sign in to submit an event.");
-  const title = cleanStr(input.title, 140);
-  if (!title) throw new Error("Event name is required.");
+  const title = cleanPostText(input.title);
+  const venue = cleanPostText(input.venue);
+  const suburb = cleanPostText(input.suburb);
+  const date = cleanStr(input.date, 60);
+  const fee = cleanPostText(input.fee);
+  const detail = cleanPostText(input.detail);
+  if (title.length < 3 || venue.length < 2 || suburb.length < 2 || !validDateOnly(date) || date < todayInSouthAfrica() || fee.length < 1 || detail.length < 20) {
+    throw new Error("Add the event name, venue, location, date, entry fee, and at least 20 characters of event details.");
+  }
   const ref = await addDoc(collection(d, "events"), {
     title,
-    venue: cleanStr(input.venue, 120) || "TBC",
-    suburb: cleanStr(input.suburb, 60) || "South Africa",
-    date: cleanStr(input.date, 60) || "Date TBC",
-    fee: cleanStr(input.fee, 40) || "Free",
+    venue,
+    suburb,
+    date,
+    fee,
+    detail,
     createdBy: uid,
     status: "live", // see submitJob — sellers are already plan-gated in rules
     createdAt: serverTimestamp(),
@@ -481,18 +517,24 @@ export async function submitEvent(input: { title: string; venue: string; suburb:
   return { ok: true as const, id: ref.id };
 }
 
-export async function submitDeal(input: { title: string; business: string; suburb: string; detail: string }) {
+export async function submitDeal(input: { title: string; business: string; suburb: string; detail: string; validUntil: string }) {
   const d = must();
   const uid = auth?.currentUser?.uid;
   if (!uid) throw new Error("Sign in to submit a deal.");
-  const title = cleanStr(input.title, 140);
-  const business = cleanStr(input.business, 90);
-  if (!title || !business) throw new Error("Deal title and business name are required.");
+  const title = cleanPostText(input.title);
+  const business = cleanPostText(input.business);
+  const suburb = cleanPostText(input.suburb);
+  const detail = cleanPostText(input.detail);
+  const validUntil = cleanStr(input.validUntil, 10);
+  if (title.length < 3 || business.length < 2 || suburb.length < 2 || detail.length < 20 || !validDateOnly(validUntil) || validUntil < todayInSouthAfrica()) {
+    throw new Error("Add a deal title, business, location, offer terms, and a valid expiry date (today or later).");
+  }
   const ref = await addDoc(collection(d, "deals"), {
     title,
     business,
-    suburb: cleanStr(input.suburb, 60) || "South Africa",
-    detail: cleanStr(input.detail, 400),
+    suburb,
+    detail,
+    validUntil,
     createdBy: uid,
     status: "live", // see submitJob — sellers are already plan-gated in rules
     createdAt: serverTimestamp(),
@@ -507,20 +549,31 @@ export async function submitDeal(input: { title: string; business: string; subur
  * bundled catalogue. Published immediately (see submitJob) — the rules already
  * restrict this collection to Business-tier sellers, so the author is known.
  */
-export async function submitPlace(input: { title: string; suburb: string; kind: string; detail: string; hours: string }) {
+export async function submitPlace(input: { title: string; imageUrl?: string; suburb: string; kind: string; detail: string; hours: string }) {
   const d = must();
   const uid = auth?.currentUser?.uid;
   if (!uid) throw new Error("Sign in to add a place.");
-  const title = cleanStr(input.title, 140);
-  if (!title) throw new Error("Place name is required.");
+  const title = cleanPostText(input.title);
+  const suburb = cleanPostText(input.suburb);
+  const kind = cleanPostText(input.kind);
+  const detail = cleanPostText(input.detail);
+  const hours = cleanPostText(input.hours);
+  const imageUrl = cleanPostText(input.imageUrl);
+  if (title.length < 2 || suburb.length < 2 || !kind || detail.length < 20 || hours.length < 2) {
+    throw new Error("Add a place name, category, location, opening hours, and at least 20 characters of visitor information.");
+  }
+  if (imageUrl && (!isHttpUrl(imageUrl) || imageUrl.length > 500)) {
+    throw new Error("The picture link must be a valid http(s) URL under 500 characters.");
+  }
   const ref = await addDoc(collection(d, "places"), {
     title,
     name: title,
     slug: slugify(title),
-    kind: cleanStr(input.kind, 40) || "attraction",
-    suburb: cleanStr(input.suburb, 60) || "South Africa",
-    detail: cleanStr(input.detail, 600),
-    hours: cleanStr(input.hours, 120) || "Hours on request",
+    ...(imageUrl ? { imageUrl } : {}),
+    kind,
+    suburb,
+    detail,
+    hours,
     createdBy: uid,
     status: "live",
     createdAt: serverTimestamp(),
@@ -538,15 +591,16 @@ export async function submitGuide(input: { title: string; suburb: string; excerp
   const d = must();
   const uid = auth?.currentUser?.uid;
   if (!uid) throw new Error("Sign in to write a guide.");
-  const title = cleanStr(input.title, 160);
-  const excerpt = cleanStr(input.excerpt, 300);
-  const body = cleanStr(input.body, 20000);
-  if (!title) throw new Error("A title is required.");
-  if (body.length < 40) throw new Error("Write at least a paragraph or two.");
+  const title = cleanPostText(input.title);
+  const excerpt = cleanPostText(input.excerpt);
+  const body = cleanPostText(input.body);
+  const suburb = cleanPostText(input.suburb);
+  if (title.length < 5 || suburb.length < 2 || excerpt.length < 30) throw new Error("Add a clear guide title, area, and a summary of at least 30 characters.");
+  if (body.length < 80) throw new Error("Write at least 80 characters of original guide content.");
   const ref = await addDoc(collection(d, "articles"), {
     title,
     slug: slugify(title),
-    suburb: cleanStr(input.suburb, 60) || "South Africa",
+    suburb,
     readTime: `${Math.max(1, Math.round(body.split(/\s+/).length / 200))} min read`,
     excerpt: excerpt || body.slice(0, 200),
     body,
@@ -646,6 +700,15 @@ export async function unlockLead(leadId: string): Promise<{
   };
 }
 
+/** Hide a buyer-owned quote request or received quote from their dashboard. */
+export async function hideBuyerDashboardItem(type: "request" | "quote", id: string): Promise<void> {
+  await apiPost(
+    "/api/buyer/dashboard",
+    { action: type === "request" ? "hide-request" : "hide-quote", id },
+    { auth: "required" },
+  );
+}
+
 /** Start a hosted checkout for a credit pack; returns the URL to redirect to. */
 export async function buyCreditPack(packId: string): Promise<{ url: string; reference: string }> {
   const json = await apiPost("/api/credits", { packId }, { auth: "required" });
@@ -674,47 +737,37 @@ export async function updateBusiness(
   patch: Record<string, unknown>,
   plan?: string
 ): Promise<void> {
-  const d = must();
   const uid = auth?.currentUser?.uid;
   if (!uid) throw new Error("Sign in first.");
   const p = plan || "free";
-  const safe: Record<string, unknown> = { updatedAt: serverTimestamp() };
-  const put = (k: string, v: unknown) => { if (v !== undefined) safe[k] = v; };
-  let services: string[] | undefined;
+  const name = cleanStr(patch.name, 120);
+  const categorySlug = cleanStr(patch.categorySlug, 60);
+  const citySlug = cleanStr(patch.citySlug, 40);
+  const suburbSlug = cleanStr(patch.suburbSlug, 60);
+  if (name.length < 2) throw new Error("Enter a business name with at least 2 characters.");
+  if (!categorySlug) throw new Error("Choose a business category.");
+  if (!citySlug || !suburbSlug) throw new Error("Choose a city and suburb.");
 
-  // Always editable (FREE and up)
-  put("name", cleanStr(patch.name, 120));
-  put("categorySlug", cleanStr(patch.categorySlug, 60));
-  put("suburbSlug", cleanStr(patch.suburbSlug, 60));
-  put("citySlug", cleanStr(patch.citySlug, 40));
-  put("phone", cleanStr(patch.phone, 30));
-  put("address", cleanStr(patch.address, 160));
-  put("hours", cleanStr(patch.hours, 120));
-  put("description", cleanStr(patch.description, 1200));
-  put("priceNote", cleanStr(patch.priceNote, 120));
+  let services: string[] | undefined;
   if (patch.services !== undefined) {
     services = Array.isArray(patch.services)
       ? patch.services.map((s) => String(s).trim()).filter(Boolean)
       : String(patch.services ?? "").split(",").map((s) => s.trim()).filter(Boolean);
   }
 
-  // PRO and up — WhatsApp button
-  if (hasCap(p, "whatsapp")) put("whatsapp", cleanStr(patch.whatsapp, 30));
-  // PRO and up — cover photo link (direct uploads are Blaze-only and land in photos[])
-  if (hasCap(p, "photos")) put("coverImageUrl", cleanStr(patch.coverImageUrl, 400));
-  // PRO and up — website link
-  if (hasCap(p, "website")) put("website", cleanStr(patch.website, 300));
-  // PREMIUM only — socials
-  if (hasCap(p, "socials")) {
-    put("facebook", cleanStr(patch.facebook, 300));
-    put("instagram", cleanStr(patch.instagram, 300));
-  }
-
-  if (Object.keys(safe).length <= 1 && services === undefined) throw new Error("Nothing to update.");
   try {
-    if (Object.keys(safe).length > 1) {
-      await updateDoc(doc(d, "businesses", businessId), safe);
-    }
+    await apiPost("/api/business", {
+      action: "profile",
+      businessId,
+      name,
+      categorySlug,
+      citySlug,
+      suburbSlug,
+      hours: cleanStr(patch.hours, 120),
+      description: cleanStr(patch.description, 1200),
+      priceNote: cleanStr(patch.priceNote, 120),
+      coverImageUrl: hasCap(p, "photos") ? cleanStr(patch.coverImageUrl, 400) : "",
+    }, { auth: "required" });
     if (services !== undefined) {
       await apiPost("/api/business", { action: "services", businessId, services }, { auth: "required" });
     }
@@ -723,6 +776,17 @@ export async function updateBusiness(
     if (/permission|PERMISSION/i.test(m)) throw new Error("Only the listing owner can edit this listing.");
     throw e instanceof Error ? e : new Error("Could not save your changes.");
   }
+}
+
+export async function updateBusinessContacts(
+  businessId: string,
+  contacts: { phone: string; email: string; whatsapp: string; website: string; facebook: string; instagram: string; address: string }
+): Promise<void> {
+  await apiPost("/api/business", {
+    action: "contacts",
+    businessId,
+    ...contacts,
+  }, { auth: "required" });
 }
 
 /** Owner takes a listing offline (hidden from public feeds) or back online. */
@@ -740,10 +804,8 @@ export async function setBusinessLiveStatus(businessId: string, status: "live" |
 }
 
 export async function deleteBusiness(businessId: string): Promise<void> {
-  const d = must();
-  const uid = auth?.currentUser?.uid;
-  if (!uid) throw new Error("Sign in first.");
-  await deleteDoc(doc(d, "businesses", businessId));
+  must();
+  await apiPost("/api/business", { action: "delete", businessId }, { auth: "required" });
 }
 
 export async function setBusinessStatus(businessId: string, status: "live" | "pending" | "rejected"): Promise<void> {

@@ -55,3 +55,17 @@ export async function uploadBusinessPhoto(businessId: string, uid: string, file:
   }
 }
 
+export async function uploadProfilePhoto(uid: string, file: File): Promise<string> {
+  if (!storage || !isFirebaseConfigured) throw new Error("Firebase Storage not configured. Add NEXT_PUBLIC_FIREBASE_* env vars.");
+  if (!uid) throw new Error("Sign in before uploading a profile photo.");
+  if (!file.type.startsWith("image/")) throw new Error("Choose an image file for your profile photo.");
+  if (file.size > 5 * 1024 * 1024) throw new Error("Profile photos must be smaller than 5MB.");
+  const name = (file.name || "profile-photo").replace(/[^a-zA-Z0-9._-]/g, "_").slice(-60);
+  const path = `users/${uid}/profile/${Date.now()}-${name}`;
+  try {
+    const snap = await uploadBytes(ref(storage, path), file);
+    return getDownloadURL(snap.ref);
+  } catch (error) {
+    throw new Error(storageBillingMessage(error) ?? (error instanceof Error ? error.message : "Profile photo upload failed."));
+  }
+}

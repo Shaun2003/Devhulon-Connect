@@ -40,11 +40,11 @@ const REBUILD_TTL_MS = 10 * 60_000;
  * Storing whole business documents would blow the 1 MiB limit at a few hundred
  * listings and waste bytes on fields no ranking path touches (description text,
  * photo URLs, verification records). This projection is what `matchPros` scores
- * on, plus the contact fields the seller needs to answer a lead.
+ * on. Contact details are stored separately and never enter this cache.
  */
 const PROJECTION = [
-  "name", "categorySlug", "suburbSlug", "citySlug", "phone", "whatsapp",
-  "address", "hours", "rating", "reviewCount", "services", "description",
+  "name", "categorySlug", "suburbSlug", "citySlug",
+  "hours", "rating", "reviewCount", "services", "description",
   "priceNote", "verified", "plan", "coverImageUrl", "ownerUid", "status",
 ] as const;
 

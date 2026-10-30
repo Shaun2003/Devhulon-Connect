@@ -9,7 +9,7 @@ import {
   Star, Tag, CalendarDays, Camera, Truck, Siren, BadgeCheck, Clock,
   SlidersHorizontal, ArrowRight, TrendingUp, Award, Sofa, Refrigerator,
   Bug, Waves, Package, KeyRound, Baby, Dumbbell, PawPrint, CakeSlice,
-  Shirt, ChefHat, Bell, MessageSquare, Send, Flag, Ban, Check, X, Info,
+  Shirt, ChefHat, Bell, MessageSquare, Send, Flag, Ban, Check, X, Info, LogOut, Settings,
   FileText, Image as ImageIcon, Phone, Ticket, Heart, Lock, UserRound,
 } from "lucide-react";
 
@@ -106,6 +106,8 @@ export const ICONS = {
   info: Info,
   file: FileText,
   image: ImageIcon,
+  logOut: LogOut,
+  settings: Settings,
 } as const satisfies Record<string, LucideComponent>;
 
 export type IconKey = keyof typeof ICONS;

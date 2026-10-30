@@ -368,7 +368,7 @@ export function subscribeLeadsByRequester(uid: string, cb: (rows: DocumentData[]
   // Equality-only query avoids requiring a composite index; sort the buyer's
   // own complete result set locally.
   return subCol("leads", [where("requesterUid", "==", uid)], (rows) =>
-    cb([...rows].sort(createdDesc as (a: DocumentData, b: DocumentData) => number)), onError
+    cb([...rows].filter((row) => row.hiddenFromBuyer !== true).sort(createdDesc as (a: DocumentData, b: DocumentData) => number)), onError
   );
 }
 
@@ -595,7 +595,7 @@ export function subscribeMyQuotes(uid: string, cb: (rows: DocumentData[]) => voi
 export function subscribeQuotesForBuyer(uid: string, cb: (rows: DocumentData[]) => void, onError?: (e: RealtimeError) => void) {
   // Equality-only query avoids a buyerUid + createdAt composite index.
   return subCol("quotes", [where("buyerUid", "==", uid)], (rows) =>
-    cb([...rows].sort(createdDesc as (a: DocumentData, b: DocumentData) => number)), onError
+    cb([...rows].filter((row) => row.hiddenFromBuyer !== true).sort(createdDesc as (a: DocumentData, b: DocumentData) => number)), onError
   );
 }
 
@@ -732,6 +732,13 @@ export function subscribeMessages(cid: string, cb: (rows: DocumentData[]) => voi
 export function subscribePortfolio(businessId: string, cb: (rows: DocumentData[]) => void, onError?: (e: RealtimeError) => void) {
   if (!businessId) return () => {};
   return subCol("portfolio", [where("businessId", "==", businessId), limit(200)], (rows) =>
+    cb([...rows].sort(createdDesc as (a: DocumentData, b: DocumentData) => number)), onError
+  );
+}
+
+/** Recent public work samples used to represent service groups on the homepage. */
+export function subscribeRecentPortfolio(cb: (rows: DocumentData[]) => void, onError?: (e: RealtimeError) => void) {
+  return subCol("portfolio", [orderBy("createdAt", "desc"), limit(500)], (rows) =>
     cb([...rows].sort(createdDesc as (a: DocumentData, b: DocumentData) => number)), onError
   );
 }

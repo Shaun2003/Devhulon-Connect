@@ -21,7 +21,7 @@ import { SITE_SHORT } from "@/lib/site";
 export const TERMS_VERSION = "2026-09-15";
 
 /** Bump when the consent wording below changes. */
-export const CONSENT_VERSION = "2026-10-23";
+export const CONSENT_VERSION = "2026-11-06";
 
 /**
  * What the buyer is explicitly agreeing to at the point their number is shared.
@@ -37,12 +37,12 @@ export const LEAD_CONSENT_LABEL =
 export const LEAD_CONSENT_DETAIL =
   "Up to 5 matched businesses are alerted. They can access your name and number only if they unlock your contact through Devhulon Connect, and may use it only to quote this job. You can withdraw consent at any time and request deletion.";
 
-/** Seller-side equivalent, for creating a listing (contact details are published). */
+/** Seller consent to store private contact settings for platform enquiries. */
 export const LISTING_CONSENT_LABEL =
-  `Yes, publish my business contact details on my public ${SITE_SHORT} listing.`;
+  `Yes, store my business contact details securely for ${SITE_SHORT} enquiries.`;
 
 export const LISTING_CONSENT_DETAIL =
-  `Your business name, category, service area and contact details are visible to anyone searching ${SITE_SHORT}. Verified businesses carry a badge; unverified listings say so.`;
+  `Your business contact details are kept separate from your public listing. Buyers can request quotes or message you through ${SITE_SHORT}; your phone, WhatsApp, email and website are not shown on public profiles.`;
 
 /**
  * How long we keep a quote request before anonymising it.

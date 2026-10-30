@@ -17,7 +17,7 @@
  * server-write-only (see firestore.rules). The client may only *read* it.
  */
 
-export type PlanId = "starter" | "professional" | "business";
+export type PlanId = "starter" | "premium";
 export type BillingPeriod = "monthly" | "annual";
 
 export type SubscriptionStatus =
@@ -68,7 +68,7 @@ export type Capability =
   | "promoArticle"
   | "multiListing";
 
-/** null = unlimited (business plan). */
+/** null = unlimited. */
 export type PlanLimits = {
   services: number | null;
   portfolio: number | null;
@@ -84,7 +84,7 @@ export type PlanConfig = {
   id: PlanId;
   name: string;
   blurb: string;
-  /** Credits added at activation, then replenished monthly while entitled. */
+  /** Monthly allocation; subscription credits expire when the next allocation starts. */
   includedCredits: number;
   /** ZAR, exclusive of VAT — VAT is a billing concern, not a display concern. */
   monthly: number;
@@ -93,99 +93,66 @@ export type PlanConfig = {
   capabilities: Capability[];
   /** Shown as "MOST POPULAR" in pricing UI. */
   popular?: boolean;
-  /** Days of free trial granted on first activation (spec §22). */
-  trialDays?: number;
   features: string[];
 };
-
-export const TRIAL_DAYS = 7;
 
 export const PLANS: PlanConfig[] = [
   {
     id: "starter",
     name: "Starter",
-    blurb: "Get discovered and start receiving matched leads.",
+    blurb: "Get discovered and try the marketplace at no monthly cost.",
     includedCredits: 35,
-    monthly: 199,
-    annual: 1990,
+    monthly: 0,
+    annual: 0,
     popular: false,
-    trialDays: TRIAL_DAYS,
-    limits: { services: 5, portfolio: 10, leadsPerMonth: 5, messagesPerMonth: 50, locations: 1, teamMembers: 1 },
-    capabilities: ["businessListing", "reviews", "serviceAreas", "messages", "basicAnalytics"],
+    limits: { services: 5, portfolio: 10, leadsPerMonth: 3, messagesPerMonth: 50, locations: 1, teamMembers: 0 },
+    capabilities: [
+      "businessListing", "reviews", "serviceAreas", "messages", "basicAnalytics",
+      "deals", "events", "jobs", "places", "guides",
+      "photos", "whatsapp", "website", "leadForm",
+    ],
     features: [
       "Business profile",
       "Up to 5 services",
       "Up to 10 portfolio items",
-      "5 lead opportunities / month",
+      "35 monthly credits",
+      "3 eligible lead opportunities / month",
       "Basic messaging — 50 seller messages / month",
       "Reviews & ratings",
-      "Service areas",
+      "1 service area",
       "Basic analytics",
-      "Business listing",
-      "7-day free trial",
+      "Deals, events and jobs publishing",
+      "Business listing and portfolio",
     ],
   },
   {
-    id: "professional",
-    name: "Professional",
-    blurb: "Stand out, publish content and win more work.",
-    includedCredits: 75,
-    monthly: 399,
-    annual: 3990,
+    id: "premium",
+    name: "Premium",
+    blurb: "More opportunities, credits and tools to grow your business.",
+    includedCredits: 300,
+    monthly: 300,
+    annual: 3000,
     popular: true,
-    limits: { services: 20, portfolio: 50, leadsPerMonth: 15, messagesPerMonth: null, locations: 2, teamMembers: 1 },
-    capabilities: [
-      "businessListing", "reviews", "serviceAreas", "messages", "unlimitedMessages",
-      "basicAnalytics", "advancedAnalytics", "featuredProfile", "priorityPlacement",
-      "deals", "events", "jobs", "profileCustomization",
-      // legacy aliases
-      "photos", "whatsapp", "website", "priority",
-    ],
-    features: [
-      "Everything in Starter",
-      "Up to 20 services",
-      "Up to 50 portfolio items",
-      "15 lead opportunities / month",
-      "Unlimited messaging",
-      "Featured profile eligibility",
-      "Deals & events",
-      "Jobs publishing",
-      "Advanced analytics",
-      "Priority placement eligibility",
-      "Multiple service areas",
-      "Additional profile customization",
-    ],
-  },
-  {
-    id: "business",
-    name: "Business",
-    blurb: "For teams, multiple locations and maximum reach.",
-    includedCredits: 200,
-    monthly: 799,
-    annual: 7990,
-    popular: false,
-    limits: { services: null, portfolio: null, leadsPerMonth: 40, messagesPerMonth: null, locations: null, teamMembers: null },
+    limits: { services: null, portfolio: null, leadsPerMonth: null, messagesPerMonth: null, locations: null, teamMembers: 5 },
     capabilities: [
       "businessListing", "reviews", "serviceAreas", "messages", "unlimitedMessages",
       "basicAnalytics", "advancedAnalytics", "featuredProfile", "priorityPlacement",
       "deals", "featuredDeals", "events", "featuredEvents", "jobs", "places", "guides",
       "profileCustomization", "priorityLeads", "multipleLocations", "teamMembers",
       "leadExport", "promoFeatures", "prioritySupport",
-      // legacy aliases (former PREMIUM-only keys)
-      "socials", "analytics", "leadForm", "promoArticle", "multiListing",
+      "photos", "whatsapp", "website", "priority", "socials", "analytics",
+      "leadForm", "promoArticle", "multiListing",
     ],
     features: [
-      "Everything in Professional",
-      "Unlimited services",
-      "Unlimited portfolio",
-      "40 lead opportunities / month",
-      "Priority leads",
-      "Multiple locations",
-      "Team members",
+      "Everything in Starter",
+      "300 credits each paid month",
+      "Unlimited eligible lead opportunities (unlocks use credits)",
+      "Unlimited services and portfolio",
+      "Unlimited messaging",
       "Advanced analytics",
-      "Featured deals & events",
-      "Places & guides publishing",
-      "Promotional features",
+      "Eligible for featured and priority placement",
+      "Multiple locations",
+      "Up to 5 team members",
       "Lead export",
       "Priority support",
     ],
@@ -193,7 +160,7 @@ export const PLANS: PlanConfig[] = [
 ];
 
 /* ── Admin-editable overrides (master spec §21) ──────────────────────────────
- * Prices, limits, trial length and marketing copy are runtime DATA: an admin
+ * Prices, limits and marketing copy are runtime DATA: an admin
  * edits `subscription_plans/{planId}` and the change applies without a deploy.
  * The PLANS array above stays the built-in default AND the fallback, so an
  * empty, partial or never-seeded collection behaves exactly as before.
@@ -209,7 +176,6 @@ export type PlanOverride = {
   blurb?: string;
   monthly?: number;
   annual?: number;
-  trialDays?: number;
   popular?: boolean;
   /** false hides the plan from the public pricing page WITHOUT deleting it. */
   active?: boolean;
@@ -264,7 +230,6 @@ export function mergePlan(base: PlanConfig, o: PlanOverride | undefined): PlanCo
     blurb: cleanText(o.blurb, 200) ?? base.blurb,
     monthly: pickNum(o.monthly, base.monthly),
     annual: pickNum(o.annual, base.annual),
-    trialDays: pickNum(o.trialDays, base.trialDays ?? 0),
     popular: typeof o.popular === "boolean" ? o.popular : base.popular,
     limits: {
       services: pickLimit(o.limits?.services, base.limits.services),
@@ -318,38 +283,42 @@ export const perMonthEquivalent = (plan: PlanConfig, period: BillingPeriod) =>
  * `subscriptions/{uid}` and `businesses/{id}` documents still carry these, so the
  * migration is a pure lookup rather than a data backfill we might get wrong.
  *
- *   free    → starter       (closest equivalent, keeps listings live)
- *   pro     → professional  (same R199 → R399 tier position)
- *   premium → business      (top tier)
+ *   free    → starter
+ *   pro / professional / business → premium
  */
 const LEGACY_PLAN_MAP: Record<string, PlanId> = {
   free: "starter",
-  pro: "professional",
-  premium: "business",
+  pro: "premium",
+  professional: "premium",
+  business: "premium",
+  premium: "premium",
 };
 
 /** Coerce any stored value (new, legacy, junk, null) to a known PlanId. */
 export function normalizePlanId(raw: unknown): PlanId {
   if (typeof raw !== "string") return "starter";
   const key = raw.trim().toLowerCase();
-  if (key === "starter" || key === "professional" || key === "business") return key;
+  if (key === "starter" || key === "premium") return key;
   return LEGACY_PLAN_MAP[key] ?? "starter";
 }
 
 export function subscriptionIsEntitled(input: {
+  plan?: unknown;
   status?: unknown;
   periodEnd?: unknown;
   cancelAtPeriodEnd?: unknown;
 }, now = Date.now()): boolean {
+  const plan = normalizePlanId(input.plan);
   const status = typeof input.status === "string" ? input.status.toLowerCase() : "";
   const periodEnd = typeof input.periodEnd === "string" ? Date.parse(input.periodEnd) : Number.NaN;
+  if (plan === "starter") return true;
   const cancelPending = status === "canceled" && input.cancelAtPeriodEnd === true;
   if (!["active", "trialing", "past_due"].includes(status) && !cancelPending) return false;
   if (input.periodEnd == null || input.periodEnd === "") return !cancelPending;
   return Number.isFinite(periodEnd) && periodEnd > now;
 }
 
-export const PLAN_RANK: Record<PlanId, number> = { starter: 0, professional: 1, business: 2 };
+export const PLAN_RANK: Record<PlanId, number> = { starter: 0, premium: 1 };
 
 export function planRank(plan: PlanId | string | null | undefined): number {
   const p = normalizePlanId(plan ?? null);
@@ -359,9 +328,9 @@ export function planRank(plan: PlanId | string | null | undefined): number {
 /** Capability → lowest plan that unlocks it. Derived from PLANS, so it can never drift. */
 export const CAP_MIN_PLAN: Record<Capability, PlanId> = (() => {
   const out = {} as Record<Capability, PlanId>;
-  const order: PlanId[] = ["starter", "professional", "business"];
+  const order: PlanId[] = ["starter", "premium"];
   for (const cap of PLANS.flatMap((p) => p.capabilities)) {
-    out[cap] = order.find((id) => getPlan(id)?.capabilities.includes(cap)) ?? "business";
+    out[cap] = order.find((id) => getPlan(id)?.capabilities.includes(cap)) ?? "starter";
   }
   return out;
 })();

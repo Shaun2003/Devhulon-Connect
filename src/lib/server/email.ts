@@ -65,7 +65,7 @@ export type EmailKind =
   | "listing-verified"    // → seller: Verified badge granted
   | "listing-unverified"  // → seller: badge revoked / re-verification needed
   | "claim-update"        // → seller: listing claim approved/rejected
-  | "team-invitation"     // → seller: added to a Business plan team
+  | "team-invitation"     // → seller: added to a Premium plan team
   | "message-new";        // → either: new chat message
 
 export type EmailPayload = {

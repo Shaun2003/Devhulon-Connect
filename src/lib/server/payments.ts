@@ -11,7 +11,7 @@
  *   YOCO_SECRET_KEY=sk_…
  *   YOCO_WEBHOOK_SECRET=whsec_…      (from Yoco dashboard → Webhooks)
  *
- * Both providers price in ZAR cents, so R199 === 19900.
+ * Both providers price in ZAR cents, so R300 === 30000.
  */
 
 import crypto from "node:crypto";
@@ -27,6 +27,7 @@ export type CheckoutRequest = {
   amountCents: number;
   reference: string;
   callbackUrl: string;
+  autoRenew?: boolean;
 };
 
 export type CheckoutSession = {
@@ -38,9 +39,21 @@ export type CheckoutSession = {
 };
 
 export type PaymentEvent =
-  | { type: "paid"; uid: string; planId: string; period: "monthly" | "annual"; reference: string; providerRef?: string }
+  | {
+      type: "paid";
+      uid: string;
+      planId: string;
+      period: "monthly" | "annual";
+      reference: string;
+      providerRef?: string;
+      authorizationCode?: string;
+      authorizationReusable?: boolean;
+      authorizationPresent?: boolean;
+      customerEmail?: string;
+      amountCents?: number;
+    }
   | { type: "failed"; uid?: string; reference: string; providerRef?: string }
-  | { type: "refunded"; reference: string }
+  | { type: "refunded"; reference: string; amountCents?: number }
   | { type: "ignored"; reason: string };
 
 export const ZAR = (rands: number) => Math.round(rands * 100);
@@ -89,8 +102,9 @@ async function paystackCheckout(req: CheckoutRequest): Promise<CheckoutSession> 
       currency: "ZAR",
       reference: req.reference,
       callback_url: req.callbackUrl,
+      ...(req.autoRenew ? { channels: ["card"] } : {}),
       // Anything the webhook needs to activate the right plan for the right user.
-      metadata: { uid: req.uid, planId: req.planId, period: req.period, source: "kasi" },
+      metadata: { uid: req.uid, planId: req.planId, period: req.period, autoRenew: req.autoRenew === true, source: "devhulonconnect" },
     }),
   });
 
@@ -126,7 +140,16 @@ export function verifyPaystackSignature(rawBody: string, headers: Headers): bool
  * waiting for the webhook.
  */
 export async function verifyPaystackTransaction(reference: string): Promise<
-  { ok: true; amountCents: number; metadata: Record<string, unknown>; planCode?: string } | { ok: false; reason: string }
+  {
+    ok: true;
+    amountCents: number;
+    metadata: Record<string, unknown>;
+    planCode?: string;
+    authorizationCode?: string;
+    authorizationReusable?: boolean;
+    authorizationPresent?: boolean;
+    customerEmail?: string;
+  } | { ok: false; reason: string }
 > {
   const secret = process.env.PAYSTACK_SECRET_KEY;
   if (!secret) return { ok: false, reason: "not-configured" };
@@ -137,7 +160,14 @@ export async function verifyPaystackTransaction(reference: string): Promise<
   const json = (await res.json()) as {
     status?: boolean;
     message?: string;
-    data?: { status?: string; amount?: number; metadata?: Record<string, unknown>; plan?: { plan_code?: string } };
+    data?: {
+      status?: string;
+      amount?: number;
+      metadata?: Record<string, unknown>;
+      plan?: { plan_code?: string };
+      authorization?: { authorization_code?: string; reusable?: boolean };
+      customer?: { email?: string };
+    };
   };
   if (!res.ok || !json.status || !json.data) return { ok: false, reason: json.message ?? "verify-failed" };
   if (json.data.status !== "success") return { ok: false, reason: json.data.status ?? "not-success" };
@@ -146,6 +176,56 @@ export async function verifyPaystackTransaction(reference: string): Promise<
     amountCents: Number(json.data.amount ?? 0),
     metadata: json.data.metadata ?? {},
     planCode: json.data.plan?.plan_code,
+    authorizationCode: json.data.authorization?.authorization_code,
+    authorizationReusable: json.data.authorization?.reusable,
+    authorizationPresent: Boolean(json.data.authorization),
+    customerEmail: json.data.customer?.email,
+  };
+}
+
+/** Charge a previously authorised reusable Paystack card for a due renewal. */
+export async function chargePaystackAuthorization(input: {
+  email: string;
+  authorizationCode: string;
+  amountCents: number;
+  reference: string;
+  uid: string;
+  period: "monthly" | "annual";
+}): Promise<{ status: string; reference: string; message?: string }> {
+  const secret = process.env.PAYSTACK_SECRET_KEY;
+  if (!secret) throw new Error("PAYSTACK_SECRET_KEY is not set.");
+  const response = await fetch(`${PAYSTACK_API}/transaction/charge_authorization`, {
+    method: "POST",
+    headers: { Authorization: "Bearer " + secret, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      email: input.email,
+      amount: input.amountCents,
+      currency: "ZAR",
+      authorization_code: input.authorizationCode,
+      reference: input.reference,
+      metadata: {
+        uid: input.uid,
+        planId: "premium",
+        period: input.period,
+        autoRenew: true,
+        renewal: true,
+        source: "devhulonconnect",
+      },
+    }),
+    cache: "no-store",
+  });
+  const result = await response.json() as {
+    status?: boolean;
+    message?: string;
+    data?: { status?: string; reference?: string };
+  };
+  if (!response.ok || !result.status || !result.data) {
+    return { status: "failed", reference: input.reference, message: result.message ?? "Renewal charge failed." };
+  }
+  return {
+    status: result.data.status ?? "pending",
+    reference: result.data.reference ?? input.reference,
+    message: result.message,
   };
 }
 
@@ -234,10 +314,13 @@ export function parseWebhookEvent(provider: PaymentProviderId, body: unknown): P
     if (provider === "paystack") {
       const event = String(b.event ?? "");
       const data = (b.data ?? {}) as Record<string, unknown>;
-      const reference = String(data.reference ?? "");
+      const transaction = (data.transaction ?? {}) as Record<string, unknown>;
+      const reference = String(data.reference ?? transaction.reference ?? "");
       const meta = (data.metadata ?? {}) as Record<string, unknown>;
 
       if (event === "charge.success") {
+        const authorization = (data.authorization ?? {}) as Record<string, unknown>;
+        const customer = (data.customer ?? {}) as Record<string, unknown>;
         return {
           type: "paid",
           uid: String(meta.uid ?? ""),
@@ -245,10 +328,22 @@ export function parseWebhookEvent(provider: PaymentProviderId, body: unknown): P
           period: (meta.period === "annual" ? "annual" : "monthly"),
           reference,
           providerRef: data.plan && typeof data.plan === "object" ? String((data.plan as Record<string, unknown>).plan_code ?? "") : undefined,
+          authorizationCode: typeof authorization.authorization_code === "string"
+            ? authorization.authorization_code : undefined,
+          authorizationReusable: authorization.reusable === true,
+          authorizationPresent: Object.keys(authorization).length > 0,
+          customerEmail: typeof customer.email === "string" ? customer.email : undefined,
+          amountCents: typeof data.amount === "number" ? data.amount : undefined,
         };
       }
       if (event === "charge.failed") return { type: "failed", uid: meta.uid ? String(meta.uid) : undefined, reference };
-      if (event.startsWith("refund")) return { type: "refunded", reference };
+      if (event.startsWith("refund")) {
+        return {
+          type: "refunded",
+          reference,
+          amountCents: typeof data.amount === "number" ? data.amount : undefined,
+        };
+      }
       return { type: "ignored", reason: `unhandled-paystack-event:${event}` };
     }
 
@@ -266,10 +361,17 @@ export function parseWebhookEvent(provider: PaymentProviderId, body: unknown): P
         period: (meta.period === "annual" ? "annual" : "monthly"),
         reference,
         providerRef: payload.id ? String(payload.id) : undefined,
+        amountCents: typeof payload.amount === "number" ? payload.amount : undefined,
       };
     }
     if (type === "payment.failed") return { type: "failed", uid: meta.uid ? String(meta.uid) : undefined, reference };
-    if (type.startsWith("refund")) return { type: "refunded", reference };
+    if (type.startsWith("refund")) {
+      return {
+        type: "refunded",
+        reference,
+        amountCents: typeof payload.amount === "number" ? payload.amount : undefined,
+      };
+    }
     return { type: "ignored", reason: `unhandled-yoco-event:${type}` };
   } catch {
     return { type: "ignored", reason: "malformed-body" };

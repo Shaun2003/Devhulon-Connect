@@ -2,7 +2,7 @@
  * Firebase Admin SDK — TRUSTED SERVER ONLY.
  *
  * Why this exists: Firestore security rules can express "you may read your own
- * data", but they cannot express "you may upgrade yourself to the Business plan
+ * data", but they cannot express "you may upgrade yourself to Premium
  * after paying". Anything money- or allowance-related must be decided by a
  * trusted process that holds credentials the browser never sees.
  *

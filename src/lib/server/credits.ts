@@ -30,17 +30,21 @@
 import { adminDb } from "./admin";
 import { nextMonthlyCreditAt } from "@/lib/credit-schedule";
 import { conversationId } from "@/lib/messages";
-import { entitlementFrom, readSubscription } from "./subscriptions";
+import { activateStarter, entitlementFrom, readSubscription, syncBusinessPlan } from "./subscriptions";
 import { grantContact } from "./contact-grants";
-import type { Firestore, Query } from "firebase-admin/firestore";
+import { Timestamp, type Firestore, type Query } from "firebase-admin/firestore";
 import { creditPriceFor, getCreditPack, tierForLead, LEAD_TIER_CREDITS, type CreditPack } from "@/lib/credits";
 import { getPlan, normalizePlanId } from "@/lib/plans";
+import { purchasedCreditRefundDelta } from "@/lib/billing-policy";
 
 const nowIso = () => new Date().toISOString();
 
 export type WalletDoc = {
   ownerUid: string;
   balance: number;
+  subscriptionBalance?: number;
+  purchasedBalance?: number;
+  subscriptionExpiresAt?: string | null;
   lifetimeEarned: number;
   lifetimeSpent: number;
   updatedAt?: string;
@@ -101,15 +105,24 @@ export async function grantCreditsForPurchase(
     const w = (wSnap.data() as WalletDoc | undefined) ?? {
       ownerUid: uid,
       balance: 0,
+      subscriptionBalance: 0,
+      purchasedBalance: 0,
       lifetimeEarned: 0,
       lifetimeSpent: 0,
       createdAt: nowIso(),
     };
-    const balance = (w.balance ?? 0) + pack.credits;
+    const purchasedBalance = typeof w.purchasedBalance === "number"
+      ? w.purchasedBalance
+      : w.balance ?? 0;
+    const subscriptionBalance = w.subscriptionBalance ?? 0;
+    const balance = subscriptionBalance + purchasedBalance + pack.credits;
 
     tx.set(walletRef, {
       ownerUid: uid,
       balance,
+      subscriptionBalance,
+      purchasedBalance: purchasedBalance + pack.credits,
+      subscriptionExpiresAt: w.subscriptionExpiresAt ?? null,
       lifetimeEarned: (w.lifetimeEarned ?? 0) + pack.credits,
       lifetimeSpent: w.lifetimeSpent ?? 0,
       createdAt: w.createdAt ?? nowIso(),
@@ -132,6 +145,161 @@ export async function grantCreditsForPurchase(
   });
 }
 
+/** Revoke the unspent portion of a refunded purchase, exactly once. */
+export async function reversePurchasedCredits(
+  uid: string,
+  reference: string,
+  purchasedCredits: number
+): Promise<{ revoked: number; shortfall: number }> {
+  const db = adminDb();
+  if (!db) throw new Error("Server storage is not configured.");
+  const walletRef = db.collection("wallets").doc(uid);
+  const ledgerRef = db.collection("credit_ledger").doc(`refund_${reference}`);
+  return db.runTransaction(async (tx) => {
+    const [existingLedger, walletSnap] = await Promise.all([
+      tx.get(ledgerRef),
+      tx.get(walletRef),
+    ]);
+    if (existingLedger.exists) {
+      const ledger = existingLedger.data() ?? {};
+      return {
+        revoked: Number(ledger.revokedCredits ?? 0),
+        shortfall: Number(ledger.shortfallCredits ?? 0),
+      };
+    }
+
+    const wallet = (walletSnap.data() as WalletDoc | undefined) ?? {
+      ownerUid: uid,
+      balance: 0,
+      subscriptionBalance: 0,
+      purchasedBalance: 0,
+      lifetimeEarned: 0,
+      lifetimeSpent: 0,
+    };
+    const purchasedBalance = typeof wallet.purchasedBalance === "number"
+      ? wallet.purchasedBalance
+      : wallet.balance ?? 0;
+    const includedIsCurrent = !wallet.subscriptionExpiresAt ||
+      !Number.isFinite(Date.parse(wallet.subscriptionExpiresAt)) ||
+      Date.parse(wallet.subscriptionExpiresAt) > Date.now();
+    const subscriptionBalance = includedIsCurrent ? wallet.subscriptionBalance ?? 0 : 0;
+    const { revoked, shortfall } = purchasedCreditRefundDelta(purchasedCredits, purchasedBalance);
+    const nextPurchasedBalance = purchasedBalance - revoked;
+    const balance = nextPurchasedBalance + subscriptionBalance;
+    tx.set(walletRef, {
+      ownerUid: uid,
+      balance,
+      purchasedBalance: nextPurchasedBalance,
+      subscriptionBalance,
+      subscriptionExpiresAt: wallet.subscriptionExpiresAt ?? null,
+      lifetimeEarned: wallet.lifetimeEarned ?? 0,
+      lifetimeSpent: wallet.lifetimeSpent ?? 0,
+      createdAt: wallet.createdAt ?? nowIso(),
+      updatedAt: nowIso(),
+    }, { merge: true });
+    tx.create(ledgerRef, {
+      id: ledgerRef.id,
+      ownerUid: uid,
+      type: "refund",
+      amount: -revoked,
+      revokedCredits: revoked,
+      shortfallCredits: shortfall,
+      balanceAfter: balance,
+      reference,
+      note: `Refund: revoked ${revoked} unspent purchased credits`,
+      createdAt: nowIso(),
+    });
+    return { revoked, shortfall };
+  });
+}
+
+/** Revoke unused included credits and downgrade only the currently refunded period. */
+export async function reverseSubscriptionCredits(
+  uid: string,
+  reference: string
+): Promise<{ revoked: number; currentPeriod: boolean }> {
+  const db = adminDb();
+  if (!db) throw new Error("Server storage is not configured.");
+  const subscriptionRef = db.collection("subscriptions").doc(uid);
+  const walletRef = db.collection("wallets").doc(uid);
+  const ledgerRef = db.collection("credit_ledger").doc(`refund_${reference}`);
+  const outcome = await db.runTransaction(async (tx) => {
+    const [existingLedger, subscriptionSnap, walletSnap] = await Promise.all([
+      tx.get(ledgerRef),
+      tx.get(subscriptionRef),
+      tx.get(walletRef),
+    ]);
+    if (existingLedger.exists) {
+      return {
+        revoked: Number(existingLedger.data()?.revokedCredits ?? 0),
+        currentPeriod: existingLedger.data()?.currentPeriod === true,
+      };
+    }
+
+    const subscription = subscriptionSnap.data() ?? {};
+    const currentPeriod = subscription.payment_reference === reference;
+    const wallet = (walletSnap.data() as WalletDoc | undefined) ?? {
+      ownerUid: uid,
+      balance: 0,
+      subscriptionBalance: 0,
+      purchasedBalance: 0,
+      lifetimeEarned: 0,
+      lifetimeSpent: 0,
+    };
+    const purchasedBalance = typeof wallet.purchasedBalance === "number"
+      ? wallet.purchasedBalance
+      : wallet.balance ?? 0;
+    const revoked = currentPeriod ? Math.max(0, wallet.subscriptionBalance ?? 0) : 0;
+    const nextPurchasedBalance = purchasedBalance;
+    const balance = nextPurchasedBalance;
+    if (currentPeriod) {
+      tx.set(subscriptionRef, {
+        subscription_status: "canceled",
+        status: "canceled",
+        cancel_at_period_end: false,
+        auto_renew: false,
+        next_renewal_at: null,
+        current_period_end: nowIso(),
+        current_period_end_at: Timestamp.fromDate(new Date()),
+        updatedAt: nowIso(),
+      }, { merge: true });
+      tx.set(walletRef, {
+        ownerUid: uid,
+        balance,
+        subscriptionBalance: 0,
+        purchasedBalance: nextPurchasedBalance,
+        subscriptionExpiresAt: nowIso(),
+        lifetimeEarned: wallet.lifetimeEarned ?? 0,
+        lifetimeSpent: wallet.lifetimeSpent ?? 0,
+        createdAt: wallet.createdAt ?? nowIso(),
+        updatedAt: nowIso(),
+      }, { merge: true });
+    }
+    tx.create(ledgerRef, {
+      id: ledgerRef.id,
+      ownerUid: uid,
+      type: "refund",
+      amount: -revoked,
+      revokedCredits: revoked,
+      shortfallCredits: 0,
+      currentPeriod,
+      balanceAfter: balance,
+      reference,
+      note: currentPeriod
+        ? `Refund: revoked ${revoked} unused subscription credits`
+        : "Refund for a non-current subscription payment",
+      createdAt: nowIso(),
+    });
+    return { revoked, currentPeriod };
+  });
+
+  if (outcome.currentPeriod) {
+    await db.collection("billing_methods").doc(uid).delete();
+    await syncBusinessPlan(db, uid, "starter");
+  }
+  return outcome;
+}
+
 /**
  * Replenish monthly plan credits for currently entitled sellers.
  *
@@ -142,6 +310,7 @@ export async function grantCreditsForPurchase(
 export async function grantDuePlanCredits(now: Date = new Date(), batchSize = 200): Promise<{
   scanned: number;
   granted: number;
+  downgraded: number;
   skipped: number;
   errors: string[];
 }> {
@@ -153,6 +322,7 @@ export async function grantDuePlanCredits(now: Date = new Date(), batchSize = 20
     .limit(Math.min(Math.max(1, Math.floor(batchSize)), 500))
     .get();
   let granted = 0;
+  let downgraded = 0;
   let skipped = 0;
   const errors: string[] = [];
 
@@ -166,6 +336,8 @@ export async function grantDuePlanCredits(now: Date = new Date(), batchSize = 20
           subscription_status?: string;
           status?: string;
           current_period_end?: string | null;
+          current_period_start?: string | null;
+          billing_period?: string;
           included_credits_next_at?: string | null;
           included_credits_anchor_day?: number;
         };
@@ -176,32 +348,52 @@ export async function grantDuePlanCredits(now: Date = new Date(), batchSize = 20
         if (Date.parse(scheduledAt) > now.getTime()) return "skipped" as const;
 
         const entitlement = entitlementFrom(subscription);
-        if (!entitlement.entitled) {
+        const storedPlanId = normalizePlanId(subscription.plan);
+        const eligible = entitlement.entitled && entitlement.plan === storedPlanId &&
+          (storedPlanId === "starter" || subscription.billing_period === "annual");
+        if (!eligible) {
           tx.set(candidate.ref, { included_credits_next_at: null, updatedAt: nowIsoValue }, { merge: true });
           return "skipped" as const;
         }
 
-        const planId = normalizePlanId(subscription.plan);
+        const planId = storedPlanId;
         const plan = getPlan(planId);
         if (!plan) throw new Error(`Plan configuration is missing for ${candidate.id}.`);
 
-        const monthKey = scheduledAt.slice(0, 10).replace(/-/g, "");
+        const anchorDay = subscription.included_credits_anchor_day ?? new Date(scheduledAt).getUTCDate();
+        let allocationAt = scheduledAt;
+        let nextGrant = nextMonthlyCreditAt(new Date(allocationAt), anchorDay);
+        while (Date.parse(nextGrant) <= now.getTime()) {
+          allocationAt = nextGrant;
+          nextGrant = nextMonthlyCreditAt(new Date(allocationAt), anchorDay);
+        }
+
+        const monthKey = allocationAt.slice(0, 10).replace(/-/g, "");
         const ledgerRef = db.collection("credit_ledger").doc(`plan_monthly_${candidate.id}_${monthKey}`);
         const walletRef = db.collection("wallets").doc(candidate.id);
         const [ledgerSnap, walletSnap] = await Promise.all([tx.get(ledgerRef), tx.get(walletRef)]);
         const wallet = (walletSnap.data() as {
           ownerUid?: string;
           balance?: number;
+          subscriptionBalance?: number;
+          purchasedBalance?: number;
+          subscriptionExpiresAt?: string | null;
           lifetimeEarned?: number;
           lifetimeSpent?: number;
           createdAt?: string;
         } | undefined) ?? {};
 
         if (!ledgerSnap.exists) {
-          const balance = (wallet.balance ?? 0) + plan.includedCredits;
+          const purchasedBalance = typeof wallet.purchasedBalance === "number"
+            ? wallet.purchasedBalance
+            : wallet.balance ?? 0;
+          const balance = purchasedBalance + plan.includedCredits;
           tx.set(walletRef, {
             ownerUid: candidate.id,
             balance,
+            subscriptionBalance: plan.includedCredits,
+            purchasedBalance,
+            subscriptionExpiresAt: nextGrant,
             lifetimeEarned: (wallet.lifetimeEarned ?? 0) + plan.includedCredits,
             lifetimeSpent: wallet.lifetimeSpent ?? 0,
             createdAt: wallet.createdAt ?? nowIsoValue,
@@ -214,18 +406,22 @@ export async function grantDuePlanCredits(now: Date = new Date(), batchSize = 20
             amount: plan.includedCredits,
             balanceAfter: balance,
             planId,
-            reference: `monthly:${candidate.id}:${scheduledAt}`,
-            note: `${plan.name} monthly plan credits`,
+            reference: `monthly:${candidate.id}:${allocationAt}`,
+            note: `${plan.name} monthly allocation; previous included credits expired`,
             createdAt: nowIsoValue,
           });
         }
 
-        const anchorDay = subscription.included_credits_anchor_day ??
-          new Date(scheduledAt).getUTCDate();
-        const nextGrant = nextMonthlyCreditAt(new Date(scheduledAt), anchorDay);
         tx.set(candidate.ref, {
           included_credits_next_at: nextGrant,
           included_credits_plan: planId,
+          ...(planId === "starter" ? {
+            current_period_start: allocationAt,
+            current_period_end: nextGrant,
+            current_period_end_at: Timestamp.fromDate(new Date(nextGrant)),
+            leads_used: 0,
+            leads_period_key: nextGrant.slice(0, 10),
+          } : {}),
           updatedAt: nowIsoValue,
         }, { merge: true });
         return ledgerSnap.exists ? "skipped" as const : "granted" as const;
@@ -237,7 +433,107 @@ export async function grantDuePlanCredits(now: Date = new Date(), batchSize = 20
     }
   }
 
-  return { scanned: due.size, granted, skipped, errors };
+  const expired = await db.collection("subscriptions")
+    .where("current_period_end", "<=", nowIsoValue)
+    .limit(Math.min(Math.max(1, Math.floor(batchSize)), 500))
+    .get();
+  for (const candidate of expired.docs) {
+    try {
+      const result = await db.runTransaction(async (tx) => {
+        const subSnap = await tx.get(candidate.ref);
+        if (!subSnap.exists) return null;
+        const subscription = subSnap.data() as {
+          plan?: string;
+          subscription_status?: string;
+          status?: string;
+          current_period_end?: string | null;
+          included_credits_anchor_day?: number;
+          trial_used?: boolean;
+          renewal_attempt_reference?: string | null;
+        };
+        if (normalizePlanId(subscription.plan) !== "premium" ||
+            !subscription.current_period_end ||
+            Date.parse(subscription.current_period_end) > now.getTime()) return null;
+        if (typeof subscription.renewal_attempt_reference === "string" && subscription.renewal_attempt_reference) {
+          const renewalPayment = await tx.get(
+            db.collection("payments").doc(subscription.renewal_attempt_reference)
+          );
+          if (renewalPayment.data()?.status === "pending") return null;
+        }
+
+        const walletRef = db.collection("wallets").doc(candidate.id);
+        const monthKey = nowIsoValue.slice(0, 10).replace(/-/g, "");
+        const ledgerRef = db.collection("credit_ledger").doc(`starter_downgrade_${candidate.id}_${monthKey}`);
+        const [walletSnap, ledgerSnap] = await Promise.all([tx.get(walletRef), tx.get(ledgerRef)]);
+        const wallet = (walletSnap.data() as {
+          balance?: number;
+          subscriptionBalance?: number;
+          purchasedBalance?: number;
+          lifetimeEarned?: number;
+          lifetimeSpent?: number;
+          createdAt?: string;
+        } | undefined) ?? {};
+        const purchasedBalance = typeof wallet.purchasedBalance === "number"
+          ? wallet.purchasedBalance
+          : wallet.balance ?? 0;
+        const nextGrant = nextMonthlyCreditAt(now, now.getUTCDate());
+        const balance = purchasedBalance + 35;
+        tx.set(candidate.ref, {
+          plan: "starter",
+          subscription_status: "active",
+          status: "active",
+          billing_period: "monthly",
+          current_period_start: nowIsoValue,
+          current_period_end: nextGrant,
+          current_period_end_at: Timestamp.fromDate(new Date(nextGrant)),
+          lead_limit: 3,
+          leads_used: 0,
+          leads_period_key: nextGrant.slice(0, 10),
+          provider: "none",
+          provider_ref: null,
+          cancel_at_period_end: false,
+          included_credits_next_at: nextGrant,
+          included_credits_plan: "starter",
+          included_credits_anchor_day: now.getUTCDate(),
+          starter_credits_granted: true,
+          updatedAt: nowIsoValue,
+        }, { merge: true });
+        if (!ledgerSnap.exists) {
+          tx.set(walletRef, {
+            ownerUid: candidate.id,
+            balance,
+            subscriptionBalance: 35,
+            purchasedBalance,
+            subscriptionExpiresAt: nextGrant,
+            lifetimeEarned: (wallet.lifetimeEarned ?? 0) + 35,
+            lifetimeSpent: wallet.lifetimeSpent ?? 0,
+            createdAt: wallet.createdAt ?? nowIsoValue,
+            updatedAt: nowIsoValue,
+          });
+          tx.set(ledgerRef, {
+            id: ledgerRef.id,
+            ownerUid: candidate.id,
+            type: "bonus",
+            amount: 35,
+            balanceAfter: balance,
+            planId: "starter",
+            reference: `downgrade:${candidate.id}:${monthKey}`,
+            note: "Starter credits granted after Premium access expired",
+            createdAt: nowIsoValue,
+          });
+        }
+        return candidate.id;
+      });
+      if (result) {
+        downgraded++;
+        await syncBusinessPlan(db, candidate.id, "starter");
+      }
+    } catch (error) {
+      errors.push(`${candidate.id}: ${error instanceof Error ? error.message : "Unknown downgrade error."}`);
+    }
+  }
+
+  return { scanned: due.size + expired.size, granted, downgraded, skipped, errors };
 }
 
 /**
@@ -260,18 +556,23 @@ export async function unlockLeadContact(
   leadId: string
 ): Promise<
   | { ok: true; credits: number; balance: number; conversationId: string; contact: { phone: string; email: string | null; name: string | null }; already?: boolean }
-  | { ok: false; reason: "no-db" | "not-found" | "ineligible" | "insufficient"; error: string; balance?: number; price?: number }
+  | { ok: false; reason: "no-db" | "not-found" | "ineligible" | "insufficient" | "limit"; error: string; balance?: number; price?: number }
 > {
   const db = adminDb();
   if (!db) return { ok: false, reason: "no-db", error: "Server storage is not configured." };
 
   // â”€â”€ Premium catalogue gate â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-  // Credits are a PREMIUM-catalogue product: an active (or trialing / past-due)
-  // subscription is required before any lead can be unlocked, whatever the
-  // wallet balance says. Free accounts see the upgrade prompt instead.
+  // Starter and Premium sellers can both browse and unlock leads. The Starter
+  // opportunity cap is checked transactionally below; bought credits do not
+  // bypass that cap.
+  if (!(await readSubscription(uid))) {
+    const activated = await activateStarter(uid);
+    if (!activated.ok) return { ok: false, reason: "ineligible", error: activated.error };
+  }
   const ent = entitlementFrom(await readSubscription(uid));
 
   const leadRef = db.collection("leads").doc(leadId);
+  const subscriptionRef = db.collection("subscriptions").doc(uid);
   const walletRef = db.collection("wallets").doc(uid);
   const ledgerRef = db.collection("credit_ledger").doc();
 
@@ -298,10 +599,13 @@ export async function unlockLeadContact(
     // the unlock by that id prevents a seller paying twice through both screens.
     const requestId = String(lead.requestId ?? leadId);
     const unlockRef = db.collection("lead_unlocks").doc(unlockId(uid, requestId));
+    const allocationRef = db.collection("lead_allocations").doc(`${uid}_${requestId}`);
     const legacyUnlockRef = db.collection("lead_unlocks").doc(unlockId(uid, leadId));
-    const [unlockSnap, walletSnap] = await Promise.all([
+    const [unlockSnap, walletSnap, subscriptionSnap, allocationSnap] = await Promise.all([
       tx.get(unlockRef),
       tx.get(walletRef),
+      tx.get(subscriptionRef),
+      tx.get(allocationRef),
     ]);
     const legacyUnlockSnap = requestId === leadId ? null : await tx.get(legacyUnlockRef);
     const existingUnlock = unlockSnap.exists ? unlockSnap : legacyUnlockSnap?.exists ? legacyUnlockSnap : null;
@@ -340,10 +644,99 @@ export async function unlockLeadContact(
     }
 
     // Step 3 â€” recompute the price from trusted server data for every lead.
+    if (!subscriptionSnap.exists) {
+      return {
+        ok: false as const,
+        reason: "ineligible" as const,
+        error: "Your Starter account could not be activated. Please try again.",
+      };
+    }
+    const subscription = subscriptionSnap.data() as {
+      plan?: string;
+      subscription_status?: string;
+      status?: string;
+      current_period_start?: string | null;
+      current_period_end?: string | null;
+      included_credits_anchor_day?: number;
+      leads_period_key?: string | null;
+      leads_used?: number;
+    };
+    const transactionEntitlement = entitlementFrom(subscription);
+    if (!transactionEntitlement.entitled) {
+      return {
+        ok: false as const,
+        reason: "ineligible" as const,
+        error: "Your subscription is not active. Please review your plan before unlocking contacts.",
+      };
+    }
+    let opportunityPeriodEnd = subscription.current_period_end ?? null;
+    let opportunityPeriodStart = subscription.current_period_start ?? nowIso();
+    if (ent.plan === "starter" &&
+        (!opportunityPeriodEnd || Date.parse(opportunityPeriodEnd) <= Date.now())) {
+      const anchorDay = subscription.included_credits_anchor_day ?? new Date(opportunityPeriodStart).getUTCDate();
+      let nextEnd = opportunityPeriodEnd && Number.isFinite(Date.parse(opportunityPeriodEnd))
+        ? opportunityPeriodEnd
+        : nowIso();
+      while (Date.parse(nextEnd) <= Date.now()) {
+        opportunityPeriodStart = nextEnd;
+        nextEnd = nextMonthlyCreditAt(new Date(nextEnd), anchorDay);
+      }
+      opportunityPeriodEnd = nextEnd;
+    }
+    const opportunityPeriodKey = opportunityPeriodEnd?.slice(0, 10) ?? null;
+    const opportunitiesUsed = subscription.leads_period_key === opportunityPeriodKey
+      ? Number(subscription.leads_used ?? 0)
+      : 0;
+    const opportunityLimit = transactionEntitlement.plan === "starter" ? 3 : null;
+    if (!allocationSnap.exists && opportunityLimit !== null && opportunitiesUsed >= opportunityLimit) {
+      return {
+        ok: false as const,
+        reason: "limit" as const,
+        error: "You've used your 3 Starter lead opportunities this month. Upgrade to Premium for unlimited eligible opportunities; buying credits does not change this limit.",
+      };
+    }
+    if (!allocationSnap.exists) {
+      const allocatedAt = nowIso();
+      tx.create(allocationRef, {
+        ownerUid: uid,
+        leadId,
+        requestId,
+        plan: transactionEntitlement.plan,
+        periodEnd: opportunityPeriodEnd,
+        allocationType: "marketplace-unlock",
+        status: "delivered",
+        createdAt: allocatedAt,
+      });
+      tx.set(subscriptionRef, {
+        leads_used: opportunitiesUsed + 1,
+        leads_period_key: opportunityPeriodKey,
+        ...(transactionEntitlement.plan === "starter" && subscription.leads_period_key !== opportunityPeriodKey ? {
+          current_period_start: opportunityPeriodStart,
+          current_period_end: opportunityPeriodEnd,
+          current_period_end_at: opportunityPeriodEnd ? Timestamp.fromDate(new Date(opportunityPeriodEnd)) : null,
+          included_credits_next_at: opportunityPeriodEnd,
+        } : {}),
+        updatedAt: allocatedAt,
+      }, { merge: true });
+    }
+
     const price = creditPriceFor(lead);
 
     // Step 4 â€” require sufficient wallet balance before revealing contact.
-    const balance = (walletSnap.data() as WalletDoc | undefined)?.balance ?? 0;
+    const wallet = (walletSnap.data() as WalletDoc | undefined) ?? {
+      ownerUid: uid,
+      balance: 0,
+      lifetimeEarned: 0,
+      lifetimeSpent: 0,
+    };
+    const purchasedBalance = typeof wallet.purchasedBalance === "number"
+      ? wallet.purchasedBalance
+      : wallet.balance ?? 0;
+    const includedIsCurrent = !wallet.subscriptionExpiresAt ||
+      !Number.isFinite(Date.parse(wallet.subscriptionExpiresAt)) ||
+      Date.parse(wallet.subscriptionExpiresAt) > Date.now();
+    const includedBalance = includedIsCurrent ? wallet.subscriptionBalance ?? 0 : 0;
+    const balance = purchasedBalance + includedBalance;
     if (balance < price) {
       return {
         ok: false as const,
@@ -355,14 +748,20 @@ export async function unlockLeadContact(
     }
 
     // Steps 5-6 — deduct + ledger row + unlock guard, atomically.
-    const nextBalance = balance - price;
-    const w = (walletSnap.data() as WalletDoc | undefined) ?? { ownerUid: uid, balance: 0, lifetimeEarned: 0, lifetimeSpent: 0 };
+    const includedSpent = Math.min(includedBalance, price);
+    const purchasedSpent = price - includedSpent;
+    const nextIncludedBalance = includedBalance - includedSpent;
+    const nextPurchasedBalance = purchasedBalance - purchasedSpent;
+    const nextBalance = nextIncludedBalance + nextPurchasedBalance;
     tx.set(walletRef, {
       ownerUid: uid,
       balance: nextBalance,
-      lifetimeEarned: w.lifetimeEarned ?? 0,
-      lifetimeSpent: (w.lifetimeSpent ?? 0) + price,
-      createdAt: w.createdAt ?? nowIso(),
+      subscriptionBalance: nextIncludedBalance,
+      purchasedBalance: nextPurchasedBalance,
+      subscriptionExpiresAt: wallet.subscriptionExpiresAt ?? null,
+      lifetimeEarned: wallet.lifetimeEarned ?? 0,
+      lifetimeSpent: (wallet.lifetimeSpent ?? 0) + price,
+      createdAt: wallet.createdAt ?? nowIso(),
       updatedAt: nowIso(),
     });
     tx.set(ledgerRef, {
@@ -371,6 +770,8 @@ export async function unlockLeadContact(
       type: "spend",
       amount: price,
       balanceAfter: nextBalance,
+      subscriptionCredits: includedSpent,
+      purchasedCredits: purchasedSpent,
       leadId,
       note: "Unlocked contact for a request",
       createdAt: nowIso(),
@@ -381,6 +782,8 @@ export async function unlockLeadContact(
       requestId,
       ownerUid: uid,
       credits: price,
+      subscriptionCredits: includedSpent,
+      purchasedCredits: purchasedSpent,
       createdAt: nowIso(),
     });
 

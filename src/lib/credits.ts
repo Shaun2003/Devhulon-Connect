@@ -32,62 +32,58 @@ export type CreditPack = {
   popular?: boolean;
 };
 
-/**
- * Launch credit packs (marketplace spec §6). These are SUGGESTED launch prices to
- * test against acquisition cost and lead quality — not locked in. The per-credit
- * figure falls as the pack grows, which encourages the larger purchase.
- */
+/** Launch exchange rate used for purchased credit packs and lead unlocks. */
+export const CREDIT_VALUE_ZAR = 2;
+
+/** Credit packs use the same R2-per-credit rate at every pack size. */
 export const CREDIT_PACKS: CreditPack[] = [
   {
     id: "starter",
     name: "Starter Pack",
     tagline: "For freelancers and new businesses",
-    price: 199,
+    price: 50 * CREDIT_VALUE_ZAR,
     credits: 50,
-    features: ["50 credits", "R3.98 per credit", "Test the platform and contact a handful of leads"],
+    features: ["50 credits", "A simple way to start unlocking leads"],
   },
   {
     id: "growth",
     name: "Growth Pack",
     tagline: "For growing service businesses",
-    price: 499,
+    price: 150 * CREDIT_VALUE_ZAR,
     credits: 150,
-    features: ["150 credits", "R3.33 per credit", "A lower cost per credit to encourage larger purchases"],
+    features: ["150 credits", "For businesses growing their pipeline"],
     popular: true,
   },
   {
     id: "business",
     name: "Business Pack",
     tagline: "For established businesses",
-    price: 999,
+    price: 350 * CREDIT_VALUE_ZAR,
     credits: 350,
-    features: ["350 credits", "R2.85 per credit", "For businesses that contact leads regularly"],
+    features: ["350 credits", "For businesses that unlock leads regularly"],
   },
 ];
 
 export const getCreditPack = (id: string): CreditPack | undefined =>
   CREDIT_PACKS.find((p) => p.id === id);
 
-/** Cost per credit for a pack, to 2dp — shown on the pack card. */
-export const perCredit = (pack: CreditPack): string => (pack.price / pack.credits).toFixed(2);
-
 /**
  * Lead price tiers (spec §7). A job is NOT worth the same to every seller, so
- * price scales with estimated value. These are starting hypotheses to test, not
- * fixed market rates — monitor contact→reply and lead→hire rates and tune them.
+ * the credit charge scales with estimated value while the smallest unlock is
+ * fixed at 10 credits.
  *
- *   small   → 5 credits    (budget under R3,000)
- *   standard→ 12 credits   (budget R3,000–R14,999)
- *   large   → 25 credits   (budget R15,000–R49,999 or estimated large job)
- *   major   → 40 credits   (budget R50,000+)
+ *   small   → 10 credits   (minimum unlock, budget under R3,000)
+ *   standard→ 20 credits   (budget R3,000–R14,999)
+ *   large   → 40 credits   (budget R15,000–R49,999 or estimated large job)
+ *   major   → 80 credits   (budget R50,000+)
  */
 export type LeadTier = "small" | "standard" | "large" | "major";
 
 export const LEAD_TIER_CREDITS: Record<LeadTier, number> = {
-  small: 5,
-  standard: 12,
-  large: 25,
-  major: 40,
+  small: 10,
+  standard: 20,
+  large: 40,
+  major: 80,
 };
 
 export const LEAD_TIER_LABEL: Record<LeadTier, string> = {

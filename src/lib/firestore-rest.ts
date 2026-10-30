@@ -315,6 +315,63 @@ export async function fetchPublicBusinessesByCategory(
   };
 }
 
+/** Read a paginated page of all live public businesses, ordered by document id. */
+export async function fetchPublicBusinessesPage(
+  cursor?: string,
+  pageSize = 50
+): Promise<PublicBusinessPage> {
+  if (!canReadFirestoreRest) throw new Error("Public Firestore reads are not configured.");
+  if (cursor && (cursor.includes("/") || cursor.length > 1500)) {
+    throw new Error("Invalid business page cursor.");
+  }
+
+  const safePageSize = Math.max(10, Math.min(50, Math.floor(pageSize)));
+  const query: Record<string, unknown> = {
+    from: [{ collectionId: "businesses" }],
+    orderBy: [{ field: { fieldPath: "__name__" }, direction: "ASCENDING" }],
+    limit: safePageSize + 1,
+  };
+  if (cursor) {
+    query.startAt = {
+      values: [{
+        referenceValue:
+          `projects/${projectId}/databases/(default)/documents/businesses/${cursor}`,
+      }],
+      before: false,
+    };
+  }
+
+  const res = await fetch(
+    `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents:runQuery?key=${apiKey}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ structuredQuery: query }),
+      cache: "no-store",
+    }
+  );
+  if (!res.ok) throw new Error(`Firestore business directory query failed (${res.status}).`);
+
+  const result = (await res.json()) as {
+    document?: { name: string; fields?: Record<string, FsValue> };
+  }[];
+  const documents = result.flatMap((entry) => entry.document ? [entry.document] : []);
+  const hasMore = documents.length > safePageSize;
+  const scanned = documents.slice(0, safePageSize);
+  const businesses = scanned
+    .map<Record<string, unknown>>((document) => ({
+      ...decodeFields(document.fields),
+      id: document.name.split("/").pop() ?? "",
+    }))
+    .filter((business) => String(business.status ?? "live") === "live");
+
+  return {
+    businesses,
+    nextCursor: hasMore ? scanned[scanned.length - 1]?.name.split("/").pop() ?? null : null,
+    hasMore,
+  };
+}
+
 /**
  * EVERY document in a collection, following `pageToken` (TRUSTED SERVER ONLY).
  *

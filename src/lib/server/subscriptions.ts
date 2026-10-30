@@ -10,12 +10,12 @@
  * realtime listeners stay simple):
  *
  *   ownerUid              string   mirrored from the doc id for collection queries
- *   plan                  PlanId   "starter" | "professional" | "business"
- *   subscription_status   string   trialing | active | past_due | canceled | expired
+ *   plan                  PlanId   "starter" | "premium"
+ *   subscription_status   string   active | past_due | canceled | expired
  *   billing_period        string   monthly | annual
- *   trial_started_at      string   ISO, set once, never reset
- *   trial_ends_at         string   ISO
- *   trial_used            boolean  one trial per account, enforced here
+ *   trial_started_at      string   legacy trial metadata
+ *   trial_ends_at         string   legacy trial metadata
+ *   trial_used            boolean  legacy trial metadata
  *   current_period_start  string   ISO
  *   current_period_end    string   ISO
  *   current_period_end_at timestamp  server-enforced expiry for Firestore rules
@@ -32,7 +32,6 @@ import { adminDb } from "./admin";
 import { Timestamp, type Firestore } from "firebase-admin/firestore";
 import { nextMonthlyCreditAt } from "@/lib/credit-schedule";
 import {
-  TRIAL_DAYS,
   daysUntil,
   getPlan,
   hasCap,
@@ -64,9 +63,18 @@ export type SubscriptionDoc = {
   provider?: string;
   provider_ref?: string | null;
   cancel_at_period_end?: boolean;
+  auto_renew?: boolean;
+  next_renewal_at?: string | null;
+  renewal_attempts?: number;
+  renewal_lock_until?: string | null;
+  renewal_attempt_reference?: string | null;
+  payment_reference?: string | null;
+  renewal_amount_cents?: number | null;
+  auto_renew_error?: string | null;
   included_credits_next_at?: string | null;
   included_credits_plan?: PlanId;
   included_credits_anchor_day?: number;
+  starter_credits_granted?: boolean;
   updatedAt?: string;
   createdAt?: string;
 };
@@ -80,7 +88,7 @@ const periodEndTimestamp = (value: string | null | undefined) => {
   return Number.isFinite(date.getTime()) ? Timestamp.fromDate(date) : null;
 };
 
-async function syncBusinessPlan(db: Firestore, uid: string, planId: PlanId): Promise<void> {
+export async function syncBusinessPlan(db: Firestore, uid: string, planId: PlanId): Promise<void> {
   const [businesses, deals, events] = await Promise.all([
     db.collection("businesses").where("ownerUid", "==", uid).get(),
     hasCap(planId, "featuredDeals") ? Promise.resolve(null) : db.collection("deals").where("createdBy", "==", uid).get(),
@@ -162,31 +170,34 @@ export type Entitlement = {
  * Pure function of the doc + the clock, so client and server agree.
  */
 export function entitlementFrom(doc: SubscriptionDoc | null): Entitlement {
-  const plan = normalizePlanId(doc?.plan ?? null);
+  const storedPlan = normalizePlanId(doc?.plan ?? null);
   const billingPeriod: BillingPeriod = doc?.billing_period === "annual" ? "annual" : "monthly";
   const periodEnd = doc?.current_period_end ?? null;
-  const normalizedStatus = normalizeStatus(doc?.subscription_status ?? doc?.status, plan, periodEnd);
+  const normalizedStatus = normalizeStatus(doc?.subscription_status ?? doc?.status, storedPlan, periodEnd);
   const status = normalizedStatus === "canceled"
     && doc?.cancel_at_period_end === true
     && Boolean(periodEnd && Date.parse(periodEnd) > Date.now())
     ? "active"
     : normalizedStatus;
 
-  const isTrial = status === "trialing";
-  const trialDaysLeft = isTrial ? daysUntil(doc?.trial_ends_at ?? periodEnd) : 0;
-  // Trialing, active, past_due (grace period) and cancel-at-period-end all keep
-  // access until the period actually lapses.
-  const entitled =
+  const paidEntitled =
+    storedPlan === "premium" &&
     (status === "active" || status === "trialing" || status === "past_due") &&
     (!periodEnd || new Date(periodEnd).getTime() > Date.now());
+  const plan: PlanId = paidEntitled ? "premium" : "starter";
+  const isTrial = paidEntitled && status === "trialing";
+  const trialDaysLeft = isTrial ? daysUntil(doc?.trial_ends_at ?? periodEnd) : 0;
+  const entitled = plan === "starter" || paidEntitled;
 
-  const leadLimit = typeof doc?.lead_limit === "number" ? doc.lead_limit : limitsFor(plan).leadsPerMonth;
-  const leadsUsed = typeof doc?.leads_used === "number" ? doc.leads_used : 0;
+  const leadLimit = plan === "starter"
+    ? limitsFor("starter").leadsPerMonth
+    : typeof doc?.lead_limit === "number" ? doc.lead_limit : limitsFor(plan).leadsPerMonth;
+  const leadsUsed = plan === storedPlan && typeof doc?.leads_used === "number" ? doc.leads_used : 0;
   const leadsRemaining = leadLimit === null ? null : Math.max(0, leadLimit - leadsUsed);
 
   return {
     plan,
-    status,
+    status: plan === "starter" ? "active" : status,
     entitled,
     isTrial,
     trialDaysLeft,
@@ -201,6 +212,142 @@ export function entitlementFrom(doc: SubscriptionDoc | null): Entitlement {
   };
 }
 
+/**
+ * Activate the permanent free Starter tier without a payment checkout.
+ * The initial allocation is idempotent and existing legacy wallet balances are
+ * preserved as purchased credits during the source split.
+ */
+export async function activateStarter(uid: string): Promise<MutationResult> {
+  const db = adminDb();
+  if (!db) return { ok: false, error: "Server billing is not configured." };
+  await loadPlanConfig();
+
+  const subscriptionRef = db.collection("subscriptions").doc(uid);
+  const walletRef = db.collection("wallets").doc(uid);
+  const now = new Date();
+  const start = now.toISOString();
+  const anchorDay = now.getUTCDate();
+  const nextCreditAt = nextMonthlyCreditAt(now, anchorDay);
+  const monthKey = start.slice(0, 10).replace(/-/g, "");
+  const ledgerRef = db.collection("credit_ledger").doc(`starter_initial_${uid}_${monthKey}`);
+
+  const result = await db.runTransaction(async (tx) => {
+    const [subSnap, walletSnap, ledgerSnap] = await Promise.all([
+      tx.get(subscriptionRef),
+      tx.get(walletRef),
+      tx.get(ledgerRef),
+    ]);
+    const existing = (subSnap.data() as SubscriptionDoc | undefined) ?? null;
+    const existingEntitlement = entitlementFrom(existing);
+    if (existingEntitlement.plan === "premium" && existingEntitlement.entitled) {
+      return { ok: true as const, entitlement: existingEntitlement };
+    }
+
+    const wallet = (walletSnap.data() as {
+      balance?: number;
+      subscriptionBalance?: number;
+      purchasedBalance?: number;
+      subscriptionExpiresAt?: string | null;
+      lifetimeEarned?: number;
+      lifetimeSpent?: number;
+      createdAt?: string;
+    } | undefined) ?? {};
+    const purchasedBalance = typeof wallet.purchasedBalance === "number"
+      ? wallet.purchasedBalance
+      : wallet.balance ?? 0;
+    const subscriptionBalance = typeof wallet.subscriptionBalance === "number"
+      ? wallet.subscriptionBalance
+      : 0;
+    const initialGranted = existing?.starter_credits_granted === true || ledgerSnap.exists;
+    const nextSubscriptionBalance = initialGranted ? subscriptionBalance : 35;
+    const totalBalance = purchasedBalance + nextSubscriptionBalance;
+    const patch: SubscriptionDoc & { starter_credits_granted: boolean } = {
+      ownerUid: uid,
+      plan: "starter",
+      subscription_status: "active",
+      status: "active",
+      billing_period: "monthly",
+      current_period_start: existing?.current_period_start ?? start,
+      current_period_end: existing?.current_period_end && Date.parse(existing.current_period_end) > now.getTime()
+        ? existing.current_period_end
+        : nextCreditAt,
+      current_period_end_at: periodEndTimestamp(
+        existing?.current_period_end && Date.parse(existing.current_period_end) > now.getTime()
+          ? existing.current_period_end
+          : nextCreditAt
+      ) ?? undefined,
+      lead_limit: 3,
+      leads_used: existingEntitlement.plan === "starter" ? existing?.leads_used ?? 0 : 0,
+      leads_period_key: existing?.leads_period_key ?? periodKey(nextCreditAt),
+      provider: "none",
+      provider_ref: null,
+      cancel_at_period_end: false,
+      auto_renew: false,
+      next_renewal_at: null,
+      renewal_attempts: 0,
+      renewal_lock_until: null,
+      renewal_attempt_reference: null,
+      payment_reference: null,
+      renewal_amount_cents: null,
+      auto_renew_error: null,
+      included_credits_next_at: existing?.included_credits_next_at &&
+        Date.parse(existing.included_credits_next_at) > now.getTime()
+        ? existing.included_credits_next_at
+        : nextCreditAt,
+      included_credits_plan: "starter",
+      included_credits_anchor_day: existing?.included_credits_anchor_day ?? anchorDay,
+      starter_credits_granted: true,
+      trial_started_at: existing?.trial_started_at ?? null,
+      trial_ends_at: existing?.trial_ends_at ?? null,
+      trial_used: existing?.trial_used ?? false,
+      createdAt: existing?.createdAt ?? start,
+      updatedAt: start,
+    };
+    tx.set(subscriptionRef, patch, { merge: true });
+
+    if (!initialGranted) {
+      tx.set(walletRef, {
+        ownerUid: uid,
+        balance: totalBalance,
+        subscriptionBalance: nextSubscriptionBalance,
+        purchasedBalance,
+        subscriptionExpiresAt: nextCreditAt,
+        lifetimeEarned: (wallet.lifetimeEarned ?? 0) + 35,
+        lifetimeSpent: wallet.lifetimeSpent ?? 0,
+        createdAt: wallet.createdAt ?? start,
+        updatedAt: start,
+      });
+      tx.set(ledgerRef, {
+        id: ledgerRef.id,
+        ownerUid: uid,
+        type: "bonus",
+        amount: 35,
+        balanceAfter: totalBalance,
+        planId: "starter",
+        reference: `starter-initial:${uid}:${monthKey}`,
+        note: "Starter monthly credits",
+        createdAt: start,
+      });
+    } else if (walletSnap.exists && wallet.subscriptionBalance === undefined) {
+      tx.set(walletRef, {
+        subscriptionBalance,
+        purchasedBalance,
+        balance: totalBalance,
+        subscriptionExpiresAt: nextCreditAt,
+        updatedAt: start,
+      }, { merge: true });
+    }
+
+    return { ok: true as const, entitlement: entitlementFrom(patch) };
+  });
+
+  if (result.ok && result.entitlement.plan === "starter") {
+    await db.collection("billing_methods").doc(uid).delete();
+    await syncBusinessPlan(db, uid, "starter");
+  }
+  return result;
+}
+
 /** Convenience: resolve entitlement straight from a uid. */
 export async function entitlementFor(uid: string): Promise<Entitlement> {
   return entitlementFrom(await readSubscription(uid));
@@ -213,7 +360,7 @@ export function serverPrice(planId: PlanId, period: BillingPeriod): number {
   return priceFor(plan, period);
 }
 
-export { TRIAL_DAYS, periodDays, addDaysIso, nowIso };
+export { periodDays, addDaysIso, nowIso };
 
 /** Result shape shared by every mutation so route handlers can respond uniformly. */
 export type MutationResult =
@@ -223,61 +370,6 @@ export type MutationResult =
 /** Period key used to detect month rollover for the lead counter. */
 const periodKey = (periodEnd: string | null | undefined) =>
   periodEnd ? periodEnd.slice(0, 10) : null;
-
-/**
- * Start the 7-day Starter trial (spec §22). One per account, ever.
- *
- * Idempotent: calling twice returns the live trial rather than extending it, so a
- * seller cannot farm unlimited free months by re-hitting the endpoint.
- */
-export async function startTrial(uid: string, planId: PlanId = "starter"): Promise<MutationResult> {
-  const db = adminDb();
-  if (!db) return { ok: false, error: "Server billing is not configured." };
-  // Admin-configurable trial length (§21) — must be loaded before getPlan().
-  await loadPlanConfig();
-
-  const ref = db.collection("subscriptions").doc(uid);
-  const existing = await ref.get();
-  const doc = (existing.exists ? existing.data() : null) as SubscriptionDoc | null;
-
-  if (doc?.trial_used) {
-    // Already trialled — return the current state untouched.
-    return { ok: false, error: "trial-already-used", entitlement: entitlementFrom(doc) };
-  }
-  if (doc && normalizeStatus(doc.subscription_status ?? doc.status, planId, doc.current_period_end) === "active") {
-    return { ok: false, error: "already-subscribed", entitlement: entitlementFrom(doc) };
-  }
-
-  const plan = getPlan(planId);
-  if (!plan) return { ok: false, error: "Unknown plan." };
-
-  const start = nowIso();
-  const end = addDaysIso(plan.trialDays ?? TRIAL_DAYS);
-  const patch: SubscriptionDoc = {
-    ownerUid: uid,
-    plan: planId,
-    subscription_status: "trialing",
-    status: "trialing",
-    billing_period: "monthly",
-    trial_started_at: start,
-    trial_ends_at: end,
-    trial_used: true,
-    current_period_start: start,
-    current_period_end: end,
-    current_period_end_at: periodEndTimestamp(end) ?? undefined,
-    lead_limit: plan.limits.leadsPerMonth,
-    leads_used: 0,
-    leads_period_key: periodKey(end),
-    provider: "none",
-    provider_ref: null,
-    cancel_at_period_end: false,
-    createdAt: doc?.createdAt ?? start,
-    updatedAt: start,
-  };
-
-  await ref.set(patch, { merge: true });
-  return { ok: true, entitlement: entitlementFrom(patch) };
-}
 
 /**
  * Activate (or renew) a paid subscription after a VERIFIED provider payment.
@@ -305,7 +397,9 @@ export async function activateSubscription(input: {
   const ledgerRef = db.collection("credit_ledger").doc(`plan_${input.paymentReference}`);
 
   const start = nowIso();
-  const end = addDaysIso(periodDays(input.period));
+  const end = input.period === "monthly"
+    ? nextMonthlyCreditAt(new Date(start), new Date(start).getUTCDate())
+    : addDaysIso(periodDays(input.period), new Date(start));
   const result = await db.runTransaction(async (tx) => {
     const [subSnap, paymentSnap] = await Promise.all([tx.get(ref), tx.get(paymentRef)]);
     if (!paymentSnap.exists) return { ok: false as const, error: "Payment record not found." };
@@ -316,6 +410,8 @@ export async function activateSubscription(input: {
       period?: string;
       kind?: string;
       status?: string;
+      autoRenew?: boolean;
+      amountCents?: number;
     };
     if (payment.ownerUid !== input.uid || payment.planId !== input.planId ||
         (payment.period === "annual" ? "annual" : "monthly") !== input.period || payment.kind === "credits") {
@@ -332,17 +428,8 @@ export async function activateSubscription(input: {
     }
 
     const planChanged = doc?.plan != null && normalizePlanId(doc.plan) !== input.planId;
-    const nextCreditAt = doc?.included_credits_next_at;
-    const hasValidCreditSchedule =
-      typeof nextCreditAt === "string" && Number.isFinite(Date.parse(nextCreditAt));
-    const shouldGrantCredits =
-      !hasValidCreditSchedule ||
-      doc?.included_credits_plan !== input.planId ||
-      !entitlementFrom(doc).entitled;
-    const creditAnchorDay = shouldGrantCredits
-      ? new Date(start).getUTCDate()
-      : doc?.included_credits_anchor_day ?? new Date(nextCreditAt ?? start).getUTCDate();
-    const walletSnap = shouldGrantCredits ? await tx.get(walletRef) : null;
+    const creditAnchorDay = new Date(start).getUTCDate();
+    const walletSnap = await tx.get(walletRef);
 
     const patch: SubscriptionDoc = {
       ownerUid: input.uid,
@@ -354,17 +441,27 @@ export async function activateSubscription(input: {
       current_period_end: end,
       current_period_end_at: periodEndTimestamp(end) ?? undefined,
       lead_limit: plan.limits.leadsPerMonth,
-      leads_used: planChanged ? 0 : (doc?.leads_used ?? 0),
+      leads_used: planChanged || payment.kind === "renewal" ? 0 : (doc?.leads_used ?? 0),
       leads_period_key: periodKey(end),
       provider: input.provider,
       provider_ref: input.providerRef ?? doc?.provider_ref ?? null,
       cancel_at_period_end: false,
+      auto_renew: payment.kind === "renewal" ? doc?.auto_renew === true : payment.autoRenew === true,
+      next_renewal_at: payment.kind === "renewal" || payment.autoRenew === true ? end : null,
+      renewal_attempts: 0,
+      renewal_lock_until: null,
+      renewal_attempt_reference: null,
+      payment_reference: input.paymentReference,
+      renewal_amount_cents: payment.kind === "renewal"
+        ? doc?.renewal_amount_cents ?? payment.amountCents ?? null
+        : payment.autoRenew === true ? payment.amountCents ?? null : null,
+      auto_renew_error: null,
       trial_started_at: doc?.trial_started_at ?? null,
       trial_ends_at: doc?.trial_ends_at ?? null,
       trial_used: doc?.trial_used ?? false,
-      included_credits_next_at: shouldGrantCredits
+      included_credits_next_at: input.period === "annual"
         ? nextMonthlyCreditAt(new Date(start), creditAnchorDay)
-        : nextCreditAt ?? null,
+        : null,
       included_credits_plan: input.planId,
       included_credits_anchor_day: creditAnchorDay,
       createdAt: doc?.createdAt ?? start,
@@ -379,18 +476,29 @@ export async function activateSubscription(input: {
       updatedAt: start,
     }, { merge: true });
 
-    if (shouldGrantCredits && walletSnap) {
+    if (walletSnap) {
       const wallet = (walletSnap.data() as {
         ownerUid?: string;
         balance?: number;
+        subscriptionBalance?: number;
+        purchasedBalance?: number;
+        subscriptionExpiresAt?: string | null;
         lifetimeEarned?: number;
         lifetimeSpent?: number;
         createdAt?: string;
       } | undefined) ?? {};
-      const balance = (wallet.balance ?? 0) + plan.includedCredits;
+      const purchasedBalance = typeof wallet.purchasedBalance === "number"
+        ? wallet.purchasedBalance
+        : wallet.balance ?? 0;
+      const balance = purchasedBalance + plan.includedCredits;
       tx.set(walletRef, {
         ownerUid: input.uid,
         balance,
+        subscriptionBalance: plan.includedCredits,
+        purchasedBalance,
+        subscriptionExpiresAt: input.period === "annual"
+          ? nextMonthlyCreditAt(new Date(start), creditAnchorDay)
+          : end,
         lifetimeEarned: (wallet.lifetimeEarned ?? 0) + plan.includedCredits,
         lifetimeSpent: wallet.lifetimeSpent ?? 0,
         createdAt: wallet.createdAt ?? start,
@@ -404,7 +512,7 @@ export async function activateSubscription(input: {
         balanceAfter: balance,
         planId: input.planId,
         reference: input.paymentReference,
-        note: `${plan.name} monthly plan credits`,
+        note: `${plan.name} included credits for confirmed payment`,
         createdAt: start,
       });
     }
@@ -436,6 +544,8 @@ export async function cancelSubscription(uid: string, immediate = false): Promis
         subscription_status: "canceled",
         status: "canceled",
         cancel_at_period_end: false,
+        auto_renew: false,
+        next_renewal_at: null,
         current_period_end: now,
         current_period_end_at: periodEndTimestamp(now) ?? undefined,
         updatedAt: now,
@@ -444,11 +554,14 @@ export async function cancelSubscription(uid: string, immediate = false): Promis
         subscription_status: "canceled",
         status: "canceled",
         cancel_at_period_end: true, // keeps access until current_period_end
+        auto_renew: false,
+        next_renewal_at: null,
         current_period_end_at: periodEndTimestamp(doc.current_period_end) ?? undefined,
         updatedAt: now,
       };
 
   await ref.set(patch, { merge: true });
+  await db.collection("billing_methods").doc(uid).delete();
   if (immediate) await syncBusinessPlan(db, uid, "starter");
   return { ok: true, entitlement: entitlementFrom({ ...doc, ...patch }) };
 }
@@ -502,26 +615,46 @@ export async function expireSubscription(uid: string): Promise<MutationResult> {
  * can show the upgrade prompt required by spec §59 rather than silently dropping
  * the lead.
  */
-export async function consumeLeadOpportunity(uid: string): Promise<
-  | { ok: true; entitlement: Entitlement }
+export async function consumeLeadOpportunity(uid: string, requestId: string): Promise<
+  | { ok: true; entitlement: Entitlement; already?: boolean }
   | { ok: false; reason: "limit" | "not-entitled" | "no-subscription"; entitlement: Entitlement | null }
 > {
   const db = adminDb();
   if (!db) return { ok: false, reason: "no-subscription", entitlement: null };
+  if (!requestId || requestId.includes("/")) {
+    return { ok: false, reason: "not-entitled", entitlement: null };
+  }
 
   const ref = db.collection("subscriptions").doc(uid);
+  const allocationRef = db.collection("lead_allocations").doc(`${uid}_${requestId}`);
 
   return db.runTransaction(async (tx) => {
-    const snap = await tx.get(ref);
+    const [snap, allocationSnap] = await Promise.all([tx.get(ref), tx.get(allocationRef)]);
     if (!snap.exists) return { ok: false as const, reason: "no-subscription" as const, entitlement: null };
 
     const doc = snap.data() as SubscriptionDoc;
     const ent = entitlementFrom(doc);
 
     if (!ent.entitled) return { ok: false as const, reason: "not-entitled" as const, entitlement: ent };
+    if (allocationSnap.exists) return { ok: true as const, entitlement: ent, already: true };
 
-    // Period rollover: a fresh period gets a fresh allowance.
-    const key = periodKey(ent.periodEnd);
+    let periodEnd = ent.periodEnd;
+    let periodStart = doc.current_period_start ?? nowIso();
+    if (ent.plan === "starter" && (!periodEnd || Date.parse(periodEnd) <= Date.now())) {
+      const anchorDay = doc.included_credits_anchor_day ?? new Date(periodStart).getUTCDate();
+      let nextEnd = periodEnd && Number.isFinite(Date.parse(periodEnd))
+        ? periodEnd
+        : nowIso();
+      while (Date.parse(nextEnd) <= Date.now()) {
+        periodStart = nextEnd;
+        nextEnd = nextMonthlyCreditAt(new Date(nextEnd), anchorDay);
+      }
+      periodEnd = nextEnd;
+    }
+
+    // Period rollover gives Starter a fresh opportunity allowance once per
+    // monthly allocation period; Premium has no fixed opportunity limit.
+    const key = periodKey(periodEnd);
     let used = ent.leadsUsed;
     const rolledOver = doc.leads_period_key !== key;
     if (rolledOver) used = 0;
@@ -530,14 +663,70 @@ export async function consumeLeadOpportunity(uid: string): Promise<
     if (limit !== null && used >= limit) {
       // Persist the rollover even when we reject, so next call is accurate.
       if (rolledOver) {
-        tx.set(ref, { leads_used: used, leads_period_key: key, updatedAt: nowIso() }, { merge: true });
+        tx.set(ref, {
+          leads_used: used,
+          leads_period_key: key,
+          ...(ent.plan === "starter" ? {
+            current_period_start: periodStart,
+            current_period_end: periodEnd,
+            current_period_end_at: periodEnd ? periodEndTimestamp(periodEnd) : null,
+            included_credits_next_at: periodEnd,
+          } : {}),
+          updatedAt: nowIso(),
+        }, { merge: true });
       }
       return { ok: false as const, reason: "limit" as const, entitlement: { ...ent, leadsUsed: used } };
     }
 
     const nextUsed = used + 1;
-    tx.set(ref, { leads_used: nextUsed, leads_period_key: key, updatedAt: nowIso() }, { merge: true });
+    const allocatedAt = nowIso();
+    tx.set(ref, {
+      leads_used: nextUsed,
+      leads_period_key: key,
+      ...(ent.plan === "starter" && doc.leads_period_key !== key ? {
+        current_period_start: periodStart,
+        current_period_end: periodEnd,
+        current_period_end_at: periodEnd ? periodEndTimestamp(periodEnd) : null,
+        included_credits_next_at: periodEnd,
+      } : {}),
+      updatedAt: allocatedAt,
+    }, { merge: true });
+    tx.create(allocationRef, {
+      ownerUid: uid,
+      requestId,
+      plan: ent.plan,
+      periodEnd,
+      allocationType: "matched",
+      status: "allocated",
+      createdAt: allocatedAt,
+    });
 
     return { ok: true as const, entitlement: { ...ent, leadsUsed: nextUsed, leadsRemaining: limit === null ? null : Math.max(0, limit - nextUsed) } };
+  });
+}
+
+/** Return a reserved opportunity only when its lead was not delivered. */
+export async function releaseLeadOpportunity(uid: string, requestId: string): Promise<void> {
+  const db = adminDb();
+  if (!db) throw new Error("Server storage is not configured.");
+  const subscriptionRef = db.collection("subscriptions").doc(uid);
+  const allocationRef = db.collection("lead_allocations").doc(`${uid}_${requestId}`);
+  await db.runTransaction(async (tx) => {
+    const [subscriptionSnap, allocationSnap] = await Promise.all([
+      tx.get(subscriptionRef),
+      tx.get(allocationRef),
+    ]);
+    if (!subscriptionSnap.exists || !allocationSnap.exists) return;
+    const allocation = allocationSnap.data() as { status?: string; periodEnd?: string | null };
+    if (allocation.status !== "allocated") return;
+    const subscription = subscriptionSnap.data() as SubscriptionDoc;
+    const samePeriod = subscription.leads_period_key === periodKey(allocation.periodEnd);
+    tx.delete(allocationRef);
+    if (samePeriod) {
+      tx.set(subscriptionRef, {
+        leads_used: Math.max(0, (subscription.leads_used ?? 0) - 1),
+        updatedAt: nowIso(),
+      }, { merge: true });
+    }
   });
 }

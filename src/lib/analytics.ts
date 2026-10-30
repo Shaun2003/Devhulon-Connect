@@ -8,7 +8,7 @@
  * phone/WhatsApp/website clicks, saves — each bumped by exactly ±1 under rules).
  *
  * Gating maps to the plans: the overview is Starter-tier (`basicAnalytics`),
- * trends + conversion funnels are `advancedAnalytics` (Professional/Business).
+ * trends + conversion funnels are Premium's `advancedAnalytics`.
  */
 
 export type SellerRow = Record<string, unknown>;

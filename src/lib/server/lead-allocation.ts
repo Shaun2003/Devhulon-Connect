@@ -21,7 +21,7 @@ import { queueEmail } from "./email";
 import { matchPros, matchCategory } from "@/lib/matching";
 import { CATEGORY_GROUPS, SERVICE_GROUPS } from "@/data/taxonomy";
 import { loadSellerCandidates } from "./seller-search";
-import { consumeLeadOpportunity, startTrial } from "./subscriptions";
+import { activateStarter, consumeLeadOpportunity, releaseLeadOpportunity } from "./subscriptions";
 import { DEFAULT_ALERTED_PROS, MAX_ALERTED_PROS, CONSENT_VERSION, TERMS_VERSION } from "@/lib/legal";
 
 /** Mirrors repo.ts `cleanStr` without importing the client Firebase SDK. */
@@ -40,27 +40,17 @@ function cleanBuyerBudget(value: unknown): number | null | false {
 export type SkipReason = "limit" | "not-entitled" | "no-subscription" | "no-owner";
 
 /**
- * Consume one lead, auto-starting a seller's free trial on first contact.
- *
- * A seller with NO subscription at all would otherwise receive nothing, which
- * makes the marketplace look dead to anyone who signs up but doesn't pay yet.
- * Bark-style marketplaces solve this by registering a professional with free
- * credits on their first lead, so the same is done here — and it is safe
- * precisely because `startTrial` is guarded by `trial_used`: one trial per
- * account, ever, and it is idempotent, so this cannot be farmed by re-hitting
- * the endpoint.
- *
- * Only the `no-subscription` case triggers a trial. A seller whose plan has
- * EXPIRED is not silently re-trialled — that would let someone churn forever
- * and get a fresh allowance each expiry, so they get the honest "renew" path.
+ * A seller without a subscription record is activated on the permanent free
+ * Starter tier. The monthly opportunity marker is keyed by the canonical
+ * request id, so retries do not consume a second opportunity.
  */
-async function consumeWithTrial(uid: string) {
-  const first = await consumeLeadOpportunity(uid);
+async function consumeWithStarter(uid: string, requestId: string) {
+  const first = await consumeLeadOpportunity(uid, requestId);
   if (first.ok || first.reason !== "no-subscription") return first;
 
-  const trial = await startTrial(uid);
-  if (!trial.ok) return first; // already used, or a config problem — report the original
-  return consumeLeadOpportunity(uid);
+  const activated = await activateStarter(uid);
+  if (!activated.ok) return first;
+  return consumeLeadOpportunity(uid, requestId);
 }
 
 
@@ -253,7 +243,7 @@ export async function allocateBroadcastLeads(
     }
 
     // ── The gate. Atomic, server-side, and the only thing that decides. ──
-    const verdict = await consumeWithTrial(ownerUid);
+    const verdict = await consumeWithStarter(ownerUid, requestRef.id);
     if (!verdict.ok) {
       skipped.push({
         name: b.name,
@@ -267,7 +257,7 @@ export async function allocateBroadcastLeads(
       // NOTE: no phone/email/name here either — see the contact vault above.
       // The seller's copy is a PREVIEW (what the job is, roughly where, when);
       // unlocking it via credits fetches the contact from lead_contacts/{requestId}.
-      await leadRef.set({
+      const leadData = {
         need,
         category: b.categorySlug,
         suburb: b.suburbSlug,
@@ -293,11 +283,11 @@ export async function allocateBroadcastLeads(
         consentVersion: CONSENT_VERSION,
         termsVersion: TERMS_VERSION,
         createdAt,
-      });
-
-      // ── The audit trail. This is what lets COUNT(allocations) independently
-      // verify `leads_used` instead of trusting a counter in a document. ──
-      await db.collection("lead_allocations").add({
+      };
+      const allocationRef = db.collection("lead_allocations").doc(`${ownerUid}_${requestRef.id}`);
+      const allocationBatch = db.batch();
+      allocationBatch.set(leadRef, leadData);
+      allocationBatch.set(allocationRef, {
         leadId: leadRef.id,
         requestId: requestRef.id,
         ownerUid,
@@ -309,6 +299,7 @@ export async function allocateBroadcastLeads(
         status: "delivered",
         createdAt,
       });
+      await allocationBatch.commit();
 
       try {
         await db.collection("notifications").add({
@@ -352,11 +343,10 @@ export async function allocateBroadcastLeads(
       // The allowance was already consumed by the transaction, so give it back
       // rather than silently billing a seller for a lead they never received.
       try {
-        await db
-          .collection("subscriptions")
-          .doc(ownerUid)
-          .set({ leads_used: Math.max(0, verdict.entitlement.leadsUsed - 1) }, { merge: true });
-      } catch { /* best effort; the skip below still reports it */ }
+        await releaseLeadOpportunity(ownerUid, requestRef.id);
+      } catch (releaseError) {
+        console.error("[DevhulonConnect] lead opportunity release failed:", releaseError);
+      }
       skipped.push({ name: b.name, reason: "not-entitled" });
       console.warn(`[KASI] lead delivery failed for ${b.id}:`, err instanceof Error ? err.message : err);
     }
@@ -434,7 +424,8 @@ export async function createDirectLead(input: {
     return { ok: false, error: "That listing has no owner yet, so requests can't be delivered." };
   }
 
-  const verdict = await consumeWithTrial(biz.ownerUid);
+  const leadRef = db.collection("leads").doc();
+  const verdict = await consumeWithStarter(biz.ownerUid, leadRef.id);
   if (!verdict.ok) {
     const atLimit = verdict.reason === "limit" || verdict.reason === "not-entitled" || verdict.reason === "no-subscription";
     return {
@@ -450,7 +441,6 @@ export async function createDirectLead(input: {
   }
 
   const createdAt = nowIso();
-  const leadRef = db.collection("leads").doc();
   // Contact goes to the vault, not the lead doc — same pay-per-contact rule as
   // the broadcast path: even a buyer who named ONE business still has their
   // number locked behind the unlock (the seller copy is a preview).
@@ -463,7 +453,7 @@ export async function createDirectLead(input: {
     requesterUid: input.requesterUid,
     createdAt,
   });
-  await leadRef.set({
+  const leadData = {
     need: cleanStr(input.need, 300) || null,
     category: biz.categorySlug ?? null,
     suburb: cleanStr(input.suburb, 120) || biz.suburbSlug || null,
@@ -480,9 +470,11 @@ export async function createDirectLead(input: {
     consentVersion: CONSENT_VERSION,
     termsVersion: TERMS_VERSION,
     createdAt,
-  });
-
-  await db.collection("lead_allocations").add({
+  };
+  const allocationRef = db.collection("lead_allocations").doc(`${biz.ownerUid}_${leadRef.id}`);
+  const allocationBatch = db.batch();
+  allocationBatch.set(leadRef, leadData);
+  allocationBatch.set(allocationRef, {
     leadId: leadRef.id,
     requestId: leadRef.id,
     ownerUid: biz.ownerUid,
@@ -494,6 +486,12 @@ export async function createDirectLead(input: {
     status: "delivered",
     createdAt,
   });
+  try {
+    await allocationBatch.commit();
+  } catch (error) {
+    await releaseLeadOpportunity(biz.ownerUid, leadRef.id);
+    throw error;
+  }
 
   try {
     await db.collection("notifications").add({

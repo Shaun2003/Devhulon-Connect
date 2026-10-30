@@ -9,21 +9,27 @@ const EXACT_CATEGORY_PAGE_SIZE = 500;
 const GROUP_FALLBACK_PAGE_SIZE = 100;
 
 function candidateCategories(input: MatchQuery): { exact?: string; groupSlugs: string[] } {
-  const inferred = input.categorySlug && categories.some((category) => category.slug === input.categorySlug)
+  const explicitGroup = SERVICE_GROUPS.find((group) => group.slug === input.serviceGroupSlug);
+  const isGroupLabel = Boolean(explicitGroup && (
+    input.need.trim().toLowerCase() === explicitGroup.name.toLowerCase()
+    || input.need.trim().toLowerCase() === explicitGroup.slug.replace(/-/g, " ")
+  ));
+  const requestedCategory = categories.some((category) => category.slug === input.categorySlug)
     ? input.categorySlug
     : matchCategory(input.need)?.slug;
-  const explicitGroup = SERVICE_GROUPS.some((group) => group.slug === input.serviceGroupSlug)
-    ? input.serviceGroupSlug
-    : undefined;
-  const exact = inferred && (!explicitGroup || CATEGORY_GROUPS[inferred] === explicitGroup)
-    ? inferred
-    : undefined;
-  const group = explicitGroup ?? (exact ? CATEGORY_GROUPS[exact] : undefined);
+  const inferred = isGroupLabel && !input.categorySlug
+    ? undefined
+    : requestedCategory;
+  if (explicitGroup && inferred && CATEGORY_GROUPS[inferred] !== explicitGroup.slug) {
+    return { groupSlugs: [] };
+  }
+  const exact = inferred;
+  const group = explicitGroup?.slug ?? (exact ? CATEGORY_GROUPS[exact] : undefined);
   return {
     exact,
-    groupSlugs: group
+    groupSlugs: group && !exact
       ? categories
-        .filter((category) => CATEGORY_GROUPS[category.slug] === group && category.slug !== exact)
+        .filter((category) => CATEGORY_GROUPS[category.slug] === group)
         .map((category) => category.slug)
       : [],
   };
@@ -95,7 +101,7 @@ export async function loadSellerCandidates(input: MatchQuery): Promise<Business[
   if (exact) {
     await queryPartitions([exact], EXACT_CATEGORY_PAGE_SIZE);
   }
-  if (!exact || result.size === 0) {
+  if (!exact) {
     await queryPartitions(groupSlugs, GROUP_FALLBACK_PAGE_SIZE);
   }
 

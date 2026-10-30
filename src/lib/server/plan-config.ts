@@ -11,7 +11,7 @@
  *   • `overrides` — admin data; may be empty, partial or junk → merged defensively
  *   • writing     — Admin SDK only. Clients can read the collection but never
  *                   write it (see firestore.rules), so a seller cannot grant
- *                   themselves the Business plan's limits.
+ *                   themselves Premium's limits.
  *
  * Everything is cached briefly because these values are read on nearly every
  * request; the TTL bounds how long an admin's edit takes to go live without
@@ -29,7 +29,7 @@ import {
   type PlanOverride,
 } from "@/lib/plans";
 
-export const PLAN_IDS: PlanId[] = ["starter", "professional", "business"];
+export const PLAN_IDS: PlanId[] = ["starter", "premium"];
 
 /** How long a loaded config is reused before the next Firestore read. */
 const CACHE_MS = 60_000;
@@ -74,8 +74,6 @@ export function coercePlanOverride(raw: unknown): PlanOverride | null {
   if (monthly !== undefined) out.monthly = monthly;
   const annual = num(r.annual);
   if (annual !== undefined) out.annual = annual;
-  const trialDays = num(r.trialDays);
-  if (trialDays !== undefined) out.trialDays = trialDays;
 
   if (typeof r.popular === "boolean") out.popular = r.popular;
   if (typeof r.active === "boolean") out.active = r.active;
@@ -213,7 +211,6 @@ export function publicPlanOverrides(): OverrideMap {
       blurb: o.blurb,
       monthly: o.monthly,
       annual: o.annual,
-      trialDays: o.trialDays,
       popular: o.popular,
       active: o.active,
       limits: o.limits,
