@@ -300,3 +300,8 @@ canvas {
   .hover-lift:hover { transform: none; }
 }
 
+input[aria-invalid="true"],
+select[aria-invalid="true"],
+textarea[aria-invalid="true"] {
+  border-color: #b91c1c !important;
+}

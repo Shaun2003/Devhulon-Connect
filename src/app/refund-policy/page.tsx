@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { CreditCard } from "lucide-react";
-import { Doc, DocHeader, DocBody } from "@/components/legal";
+import { DocBody } from "@/components/legal";
+import { PageHero } from "@/components/ui";
 import { CONTACT_EMAIL, SITE_NAME, SITE_SHORT } from "@/lib/site";
 
 export const metadata: Metadata = {
@@ -16,19 +16,21 @@ export const metadata: Metadata = {
   },
 };
 
-const UPDATED = "[Insert date]";
+const UPDATED = "29 October 2026";
 
 export default function RefundPolicyPage() {
   return (
-    <Doc>
-      <DocHeader
+    <div className="min-h-screen">
+      <PageHero
         kicker="Legal"
         title="Refund Policy"
         sub={`How refunds work for subscription payments made to ${SITE_NAME} and service payments made directly to providers.`}
-        updated={UPDATED}
-        icon={CreditCard}
-      />
+        crumbs={[{ label: "Home", href: "/" }, { label: "Refund Policy" }]}
+      >
+        <p className="text-xs text-white/60">Last updated: {UPDATED}</p>
+      </PageHero>
 
+      <main className="mx-auto max-w-6xl px-4 py-10">
       <DocBody>
         <h2>1. Purpose and Scope</h2>
         <p>
@@ -88,6 +90,7 @@ export default function RefundPolicyPage() {
           provider&apos;s service, refer to our <Link href="/complaints">Complaints &amp; Disputes Policy</Link>.
         </p>
       </DocBody>
-    </Doc>
+      </main>
+    </div>
   );
 }

@@ -3,7 +3,6 @@ import { use, useState, type FormEvent } from "react";
 import { matchProRequest, submitLead } from "@/lib/repo";
 import { slugify } from "@/lib/utils";
 import Link from "next/link";
-import { categories } from "@/data/categories";
 import { matchCategory } from "@/lib/matching";
 import { CATEGORY_GROUPS, SERVICE_GROUPS } from "@/data/taxonomy";
 import { TrustBar, PageHero } from "@/components/ui";
@@ -12,18 +11,17 @@ import { LEAD_CONSENT_DETAIL, LEAD_CONSENT_LABEL } from "@/lib/legal";
 import { KIcon } from "@/lib/icons";
 import { PlaceSuggestions } from "@/components/SearchBar";
 import { trackAnalyticsEvent } from "@/lib/track-analytics";
+import { FieldLabel, RequiredFieldsLegend } from "@/components/forms/FormFields";
 
 export default function RequestQuotePage({ searchParams }: { searchParams: Promise<{ business?: string; need?: string; suburb?: string; category?: string }> }) {
   const sp = use(searchParams);
   const businessId = (sp.business ?? "").trim();
   const initialNeed = (sp.need ?? "").trim();
-  const initialCategory = sp.category && categories.some((category) => category.slug === sp.category)
+  const initialCategory = sp.category && CATEGORY_GROUPS[sp.category]
     ? sp.category
     : matchCategory(initialNeed)?.slug;
-  const initialGroup = sp.category && SERVICE_GROUPS.some((group) => group.slug === sp.category)
-    ? sp.category
-    : initialCategory ? CATEGORY_GROUPS[initialCategory] ?? "" : "";
-  const [serviceGroupSlug, setServiceGroupSlug] = useState(initialGroup);
+  const initialServiceGroup = SERVICE_GROUPS.find((group) => group.slug === sp.category)?.slug
+    ?? (initialCategory ? CATEGORY_GROUPS[initialCategory] ?? "" : "");
   const [status, setStatus] = useState<string | null>(null);
   const [compareReady, setCompareReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -32,11 +30,21 @@ export default function RequestQuotePage({ searchParams }: { searchParams: Promi
   // the server, so this is a real gate rather than a courtesy line.
   const [consent, setConsent] = useState(false);
   const [consentErr, setConsentErr] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
 
   async function onSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     // Capture the form node BEFORE awaiting (React nulls e.currentTarget after yield).
     const formEl = e.currentTarget;
+    const invalidFields = Array.from(formEl.querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>("input, textarea, select"))
+      .filter((field) => field.name !== "consent" && !field.disabled && !field.validity.valid);
+    if (invalidFields.length > 0) {
+      const errors = Object.fromEntries(invalidFields.map((field) => [field.name, field.validationMessage || "Check this field."]));
+      setFieldErrors(errors);
+      invalidFields[0].focus();
+      return;
+    }
+    setFieldErrors({});
     setBusy(true);
     setStatus(null);
     setCompareReady(false);
@@ -51,7 +59,7 @@ export default function RequestQuotePage({ searchParams }: { searchParams: Promi
     const rawSuburb = String(fd.get("suburb") ?? "");
     try {
       const need = String(fd.get("need") ?? "");
-      const selectedServiceGroup = businessId ? undefined : String(fd.get("serviceGroup") ?? "");
+      const selectedServiceGroup = businessId ? undefined : String(fd.get("serviceGroupSlug") ?? "");
       const timeline = String(fd.get("timeline") ?? "");
       const name = String(fd.get("name") ?? "");
       const email = String(fd.get("email") ?? "");
@@ -95,7 +103,8 @@ export default function RequestQuotePage({ searchParams }: { searchParams: Promi
       }
       setBusy(false);
       formEl.reset();
-      setServiceGroupSlug("");
+      const serviceSelect = formEl.querySelector<HTMLSelectElement>('select[name="serviceGroupSlug"]');
+      if (serviceSelect) serviceSelect.value = "";
       // Reset the tick too: the buyer just consented to share details for THIS
       // request, and leaving it pre-ticked would let the next submit reuse consent
       // that was never given for the next job.
@@ -118,7 +127,7 @@ export default function RequestQuotePage({ searchParams }: { searchParams: Promi
         crumbs={[{ label: "Home", href: "/" }, { label: "Request a quote" }]}
       />
       <PlaceSuggestions id="sa-request-quote-places" />
-      <main className="max-w-3xl mx-auto px-4 py-10 space-y-6">
+      <main className="max-w-6xl mx-auto px-4 py-10 space-y-6">
 
       <ol className="flex flex-wrap items-center justify-center gap-x-3 gap-y-2" aria-label="How it works">
         {steps.map((s, i) => (
@@ -137,9 +146,27 @@ export default function RequestQuotePage({ searchParams }: { searchParams: Promi
 
           <form
         onSubmit={onSubmit}
-        className="bg-white rounded-3xl border border-[#e7eef5] shadow-sm p-5 sm:p-8 space-y-6"
-      >
-        <section>
+            noValidate
+            onInvalidCapture={(event) => {
+              const field = event.target;
+              if (field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement || field instanceof HTMLSelectElement) {
+                setFieldErrors((current) => ({ ...current, [field.name]: field.validationMessage }));
+              }
+            }}
+            onInputCapture={(event) => {
+              const field = event.target;
+              if ((field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement || field instanceof HTMLSelectElement) && field.validity.valid) {
+                setFieldErrors((current) => {
+                  const next = { ...current };
+                  delete next[field.name];
+                  return next;
+                });
+              }
+            }}
+            className="bg-white rounded-3xl border border-[#e7eef5] shadow-sm p-5 sm:p-8 space-y-6"
+          >
+            <RequiredFieldsLegend />
+            <section>
           <h2 className="flex items-center gap-2.5 text-base font-black text-[#10243e] pb-3 border-b border-[#e7eef5]">
             <span className="icon-3d icon-3d-xs" aria-hidden>
               <KIcon name="search" size={16} />
@@ -148,36 +175,46 @@ export default function RequestQuotePage({ searchParams }: { searchParams: Promi
           </h2>
           <div className="space-y-4 mt-4">
             {!businessId && (
-              <label className="block text-sm font-bold text-[#10243e]">
-                Service
+              <FieldLabel label="Service" required error={fieldErrors.serviceGroupSlug}>
                 <select
-                  name="serviceGroup"
+                  name="serviceGroupSlug"
                   required
-                  value={serviceGroupSlug}
-                  onChange={(event) => setServiceGroupSlug(event.target.value)}
-                  className="mt-1.5 w-full rounded-xl border-2 border-[#e7eef5] focus:border-[#7ac142] px-4 py-3 text-sm font-normal bg-white outline-none transition-colors"
+                  defaultValue={initialServiceGroup}
+                  aria-invalid={Boolean(fieldErrors.serviceGroupSlug)}
+                  aria-describedby={fieldErrors.serviceGroupSlug ? "field-error-service" : undefined}
+                  onChange={() => {
+                    setFieldErrors((current) => {
+                      const next = { ...current };
+                      delete next.serviceGroupSlug;
+                      return next;
+                    });
+                  }}
+                  className="mt-1.5 w-full cursor-pointer rounded-xl border-2 border-[#e7eef5] bg-white px-4 py-3 text-sm font-normal outline-none transition-colors focus:border-[#7ac142]"
                 >
                   <option value="">Choose the service you need</option>
                   {SERVICE_GROUPS.map((group) => (
                     <option key={group.slug} value={group.slug}>{group.name}</option>
                   ))}
                 </select>
-              </label>
+              </FieldLabel>
             )}
-            <label className="block text-sm font-bold text-[#10243e]">
-              Describe the job
+            <FieldLabel label="Describe the job" required error={fieldErrors.need}>
               <textarea
                 required
                 name="need"
+                minLength={2}
+                aria-invalid={Boolean(fieldErrors.need)}
+                aria-describedby={fieldErrors.need ? "field-error-describe-the-job" : undefined}
                 rows={3}
                 defaultValue={initialNeed}
                 placeholder="e.g. Need a reliable plumber to fix a burst geyser…"
                 className="mt-1.5 w-full rounded-xl border-2 border-[#e7eef5] focus:border-[#7ac142] px-4 py-3 text-sm font-normal outline-none transition-colors resize-none"
               />
-            </label>
+            </FieldLabel>
             <div className="grid sm:grid-cols-2 gap-4">
-            <label className="block text-sm font-bold text-[#10243e]">
-              Suburb / area
+            <FieldLabel label="Suburb / area"
+              hint="This helps prioritise nearby pros; remote services can match across locations."
+            >
               <input
                 name="suburb"
                 list="sa-request-quote-places"
@@ -185,12 +222,8 @@ export default function RequestQuotePage({ searchParams }: { searchParams: Promi
                 placeholder="e.g. Gauteng or 0157"
                 className="mt-1.5 w-full rounded-xl border-2 border-[#e7eef5] focus:border-[#7ac142] px-4 py-3 text-sm font-normal outline-none transition-colors"
               />
-              <span className="mt-1 block text-xs font-normal text-[#1d3a5f]/60">
-                Optional. This helps prioritise nearby pros; remote services can match across locations.
-              </span>
-            </label>
-              <label className="block text-sm font-bold text-[#10243e]">
-                When do you need it?
+            </FieldLabel>
+              <FieldLabel label="When do you need it?">
                 <select
                   name="timeline"
                   className="mt-1.5 w-full rounded-xl border-2 border-[#e7eef5] focus:border-[#7ac142] px-4 py-3 text-sm font-normal bg-white outline-none transition-colors cursor-pointer"
@@ -200,10 +233,11 @@ export default function RequestQuotePage({ searchParams }: { searchParams: Promi
                   <option value="Within a week">Within a week</option>
                   <option value="Flexible">I&apos;m flexible</option>
                 </select>
-              </label>
+              </FieldLabel>
             </div>
-            <label className="block text-sm font-bold text-[#10243e]">
-              Your budget (optional)
+            <FieldLabel label="Your budget" error={fieldErrors.budget}
+              hint="Sellers can see your budget on the lead preview before unlocking your contact details."
+            >
               <span className="mt-1.5 flex items-center rounded-xl border-2 border-[#e7eef5] focus-within:border-[#7ac142] px-4">
                 <span className="text-sm text-[#1d3a5f]/60">R</span>
                 <input
@@ -213,14 +247,13 @@ export default function RequestQuotePage({ searchParams }: { searchParams: Promi
                   max="5000000"
                   step="1"
                   inputMode="numeric"
+                  aria-invalid={Boolean(fieldErrors.budget)}
+                  aria-describedby={fieldErrors.budget ? "field-error-your-budget" : undefined}
                   placeholder="e.g. 5000"
                   className="w-full px-2 py-3 text-sm font-normal outline-none"
                 />
               </span>
-              <span className="mt-1 block text-xs font-normal text-[#1d3a5f]/60">
-                Sellers can see your budget on the lead preview before unlocking your contact details.
-              </span>
-            </label>
+            </FieldLabel>
           </div>
         </section>
         <section>
@@ -232,34 +265,40 @@ export default function RequestQuotePage({ searchParams }: { searchParams: Promi
           </h2>
           <div className="space-y-4 mt-4">
             <div className="grid sm:grid-cols-2 gap-4">
-            <label className="block text-sm font-bold text-[#10243e]">
-              Full name
+            <FieldLabel label="Full name" required error={fieldErrors.name}>
               <input
                 required
                 name="name"
+                minLength={2}
+                aria-invalid={Boolean(fieldErrors.name)}
                 placeholder="Thandi Mokoena"
                 className="mt-1.5 w-full rounded-xl border-2 border-[#e7eef5] focus:border-[#7ac142] px-4 py-3 text-sm font-normal outline-none transition-colors"
               />
-            </label>
-            <label className="block text-sm font-bold text-[#10243e]">
-              Email
+            </FieldLabel>
+            <FieldLabel label="Email" required error={fieldErrors.email}>
               <input
                 required
                 name="email"
+                type="email"
+                aria-invalid={Boolean(fieldErrors.email)}
+                aria-describedby={fieldErrors.email ? "field-error-email" : undefined}
                 placeholder="you@example.co.za"
                 className="mt-1.5 w-full rounded-xl border-2 border-[#e7eef5] focus:border-[#7ac142] px-4 py-3 text-sm font-normal outline-none transition-colors"
               />
-            </label>
+            </FieldLabel>
             </div>
-            <label className="block text-sm font-bold text-[#10243e]">
-              Phone / WhatsApp
+            <FieldLabel label="Phone / WhatsApp" required error={fieldErrors.phone}>
               <input
                 required
                 name="phone"
+                type="tel"
+                minLength={6}
+                aria-invalid={Boolean(fieldErrors.phone)}
+                aria-describedby={fieldErrors.phone ? "field-error-phone-whatsapp" : undefined}
                 placeholder="082 123 4567"
                 className="mt-1.5 w-full rounded-xl border-2 border-[#e7eef5] focus:border-[#7ac142] px-4 py-3 text-sm font-normal outline-none transition-colors"
               />
-            </label>
+            </FieldLabel>
           </div>
         </section>
 
@@ -272,6 +311,7 @@ export default function RequestQuotePage({ searchParams }: { searchParams: Promi
           label={LEAD_CONSENT_LABEL}
           detail={LEAD_CONSENT_DETAIL}
           error={consentErr}
+          onInvalid={() => setConsentErr("Consent is required before we can share your details with matched businesses.")}
         />
 
         <div className="pt-2 space-y-3">
@@ -280,7 +320,6 @@ export default function RequestQuotePage({ searchParams }: { searchParams: Promi
             className="w-full bg-[#10243e] hover:bg-[#1d3a5f] text-white font-black text-base rounded-xl !py-4 disabled:opacity-60 transition-colors inline-flex items-center justify-center gap-2"
           >
             {busy ? "Sending…" : "Get my quotes — free"}
-            {!busy && <KIcon name="arrowRight" size={18} />}
           </button>
 
           {status && (
@@ -291,13 +330,13 @@ export default function RequestQuotePage({ searchParams }: { searchParams: Promi
               </p>
               {compareReady && (
                 <Link href="/compare-quotes" className="ml-6 mt-1 inline-block text-xs font-extrabold text-[#3c6b1d] underline">
-                  Compare quotes →
+                  Compare quotes 
                 </Link>
               )}
             </div>
           )}
           {error && (
-            <p className="flex items-center gap-2 text-sm font-bold text-red-700 bg-red-50 border border-red-200 rounded-xl px-4 py-3">
+            <p role="alert" className="flex items-center gap-2 text-sm font-bold text-red-700 bg-red-50 border border-red-200 rounded-xl px-4 py-3">
               <KIcon name="info" size={16} className="shrink-0" />
               {error}
             </p>

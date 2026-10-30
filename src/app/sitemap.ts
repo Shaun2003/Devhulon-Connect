@@ -26,7 +26,6 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     { url: `${base}/tools`, changeFrequency: "weekly", priority: 0.6 },
 
     // Conversion + business pages
-    { url: `${base}/advertise`, changeFrequency: "monthly", priority: 0.6 },
     { url: `${base}/list-business`, changeFrequency: "monthly", priority: 0.7 },
     { url: `${base}/request-quote`, changeFrequency: "monthly", priority: 0.7 },    // Trust / legal (required for AdSense approval)
     { url: `${base}/about`, changeFrequency: "monthly", priority: 0.5 },
@@ -98,4 +97,3 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
 
   return urls;
 }
-

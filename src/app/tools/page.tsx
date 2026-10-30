@@ -32,7 +32,7 @@ export default function ToolsPage() {
               <p className="font-extrabold text-lg text-[#10243e]">{c.name}</p>
               <p className="text-sm text-[#1d3a5f]/70 mt-1">{c.desc}</p>
             </span>
-            <span className="text-[#558c2b] opacity-0 group-hover:opacity-100 transition text-xl font-black">→</span>
+            <span className="text-[#558c2b] opacity-0 group-hover:opacity-100 transition text-xl font-black"></span>
           </Link>
         ))}
       </div>

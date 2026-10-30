@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { Metadata } from "next";
-import { Doc, DocHeader, DocBody } from "@/components/legal";
+import { DocBody } from "@/components/legal";
+import { PageHero } from "@/components/ui";
 import { CONTACT_EMAIL, SITE_LEGAL, SITE_NAME, SITE_SHORT } from "@/lib/site";
 
 export const metadata: Metadata = {
@@ -13,14 +14,17 @@ const UPDATED = "26 October 2026";
 
 export default function TermsPage() {
   return (
-    <Doc>
-      <DocHeader
+    <div className="min-h-screen">
+      <PageHero
         kicker="Legal"
         title="Terms of Use"
         sub={`These Terms of Use govern access to and use of ${SITE_NAME}. By using the platform, you agree to these terms and the additional policies applicable to your activities.`}
-        updated={UPDATED}
-      />
+        crumbs={[{ label: "Home", href: "/" }, { label: "Terms of Use" }]}
+      >
+        <p className="text-xs text-white/60">Last updated: {UPDATED}</p>
+      </PageHero>
 
+      <main className="mx-auto max-w-6xl px-4 py-10">
       <DocBody>
         <h2>1. Introduction</h2>
         <p>
@@ -31,7 +35,7 @@ export default function TermsPage() {
         </p>
         <h2>2. Definitions</h2>
         <ul>
-          <li><b>Platform</b> means the Devhulon Connect website, application or other digital services officially operated by Devhulon.</li>
+          <li><b>Platform</b> means the DevhulonConnect website, application or other digital services officially operated by Devhulon.</li>
           <li><b>User</b> means any person accessing or using the platform.</li>
           <li><b>Buyer</b> means a user seeking or purchasing services from a service provider.</li>
           <li><b>Seller or service provider</b> means a user offering services through the platform.</li>
@@ -167,6 +171,7 @@ export default function TermsPage() {
           Company registration number: 2024 / 683591 / 07
         </p>
       </DocBody>
-    </Doc>
+      </main>
+    </div>
   );
 }

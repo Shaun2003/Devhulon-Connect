@@ -65,7 +65,7 @@ export default function Home() {
   const topFaqs = categories.flatMap((c) => c.faqs.map((f) => ({ ...f, tag: c.plural }))).slice(0, 5);
   return (
     <div>
-      <section className="bg-[#0b1e33] py-24 sm:py-36 text-center px-4 relative flex flex-col justify-center min-h-[500px]">
+      <section className="bg-[#0b1e33] py-20 sm:py-28 text-center px-4 relative flex flex-col justify-center min-h-[460px]">
         <div
           className="absolute top-0 left-0 w-full h-full bg-cover bg-center z-0"
           style={{ backgroundImage: "url('https://images.unsplash.com/photo-1522202176988-66273c2fd55f?ixlib=rb-4.0.3&auto=format&fit=crop&w=2000&q=80')" }}
@@ -76,7 +76,7 @@ export default function Home() {
             Find a pro near you — <span className="text-[#7ac142]">fast</span>.
           </h1>
           <p className="mt-5 max-w-2xl mx-auto text-white/90 text-lg sm:text-xl drop-shadow-md">
-            Tell us what you need and where. We match you to local pros you can call right now.
+            Tell us what you need and where. Compare responses from relevant local businesses.
           </p>
           <div className="mt-10 flex justify-center">
             <SearchBar citySlug="all" />
@@ -100,9 +100,6 @@ export default function Home() {
             title="What do you need help with?"
             sub="Browse local professionals, compare their services, and request quotes when you find a good fit."
           />
-          {/* Live tiles: each group shows a photo a seller actually uploaded
-              (best-rated business in the group's category). No stock fallback —
-              a group with no seller photo yet renders as a solid navy tile. */}
           <HomeServiceGroups />
           <div className="mt-8 text-center">
             <Link href="/services" className="inline-block border-2 border-[#10243e] text-[#10243e] font-bold py-3 px-8 rounded-full hover:bg-[#10243e] hover:text-white transition-colors">View all services</Link>
@@ -148,7 +145,7 @@ export default function Home() {
                       </p>
                     </div>
                     <span className="text-[#e7eef5] group-hover:text-[#558c2b] transition-colors flex items-center shrink-0">
-                      <KIcon name="arrowRight" size={16} strokeWidth={2.2} />
+                      
                     </span>
                   </div>
                 </Link>
@@ -169,7 +166,7 @@ export default function Home() {
               <p className="text-white/80 text-lg mb-8 max-w-xl">
                 Join {SITE_SHORT} to connect with customers looking for your services. Sign up as a seller to unlock your professional dashboard.
               </p>
-              <Link href="/list-business" className="inline-block bg-[#7ac142] text-[#0b1e33] font-bold py-3 px-8 rounded-full hover:bg-[#8fd158] transition-colors shadow-lg">Become a Professional</Link>
+              <Link href="/list-business" className="inline-block bg-[#7ac142] text-[#0b1e33] font-bold py-3 px-8 rounded-full hover:bg-[#8fd158] transition-colors shadow-lg">List your business</Link>
             </div>
             <div className="hidden md:block w-32 h-32 rounded-full shrink-0 flex items-center justify-center">
               <div className="icon-3d icon-3d-xl"><KIcon name="briefcase" size={48} strokeWidth={2.2} /></div>

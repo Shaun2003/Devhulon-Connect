@@ -43,7 +43,7 @@ function CategoryCard({ c }: { c: Category }) {
         </span>
         <span className="text-xs text-[#1d3a5f]/70 mt-1 block leading-snug flex-1">{c.blurb}</span>
         <span className="inline-flex items-center gap-1 text-[11px] font-extrabold text-[#558c2b] mt-3 uppercase tracking-wider">
-          Find pros <KIcon name="arrowRight" size={14} />
+          Find pros 
         </span>
       </div>
     </Link>
@@ -121,7 +121,7 @@ export default function ServicesIndexPage() {
             </p>
           </div>
           <Link href="/list-business" className="btn-hippo text-sm shrink-0">
-            List your business →
+            List your business 
           </Link>
         </section>
       </main>

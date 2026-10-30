@@ -1,12 +1,12 @@
 import type { Metadata } from "next";
-import { CreditCard } from "lucide-react";
-import { Doc, DocHeader, DocBody } from "@/components/legal";
+import { DocBody } from "@/components/legal";
+import { PageHero } from "@/components/ui";
 import { CONTACT_EMAIL, SITE_NAME, SITE_SHORT } from "@/lib/site";
 
 export const metadata: Metadata = {
   title: "Subscription Terms",
   description:
-    `How ${SITE_SHORT} seller subscriptions work — plans, billing, renewal and cancellation.`,
+    `How ${SITE_SHORT} seller plans, prepaid billing, credits and expiry work.`,
   alternates: { canonical: "/subscription-terms" },
   openGraph: {
     title: `${SITE_SHORT} subscription terms`,
@@ -15,107 +15,120 @@ export const metadata: Metadata = {
   },
 };
 
-const UPDATED = "[Insert date]";
+const UPDATED = "29 October 2026";
 
 export default function SubscriptionTermsPage() {
   return (
-    <Doc>
-      <DocHeader
+    <div className="min-h-screen">
+      <PageHero
         kicker="Legal"
         title="Subscription Terms"
-        sub={`Seller subscription terms for ${SITE_NAME}. Plans, billing, renewal, cancellation and refunds.`}
-        updated={UPDATED}
-        icon={CreditCard}
-      />
+        sub={`Seller plan terms for ${SITE_NAME}. Prepaid billing, credits, expiry and refunds.`}
+        crumbs={[{ label: "Home", href: "/" }, { label: "Subscription Terms" }]}
+      >
+        <p className="text-xs text-white/60">Last updated: {UPDATED}</p>
+      </PageHero>
 
+      <main className="mx-auto max-w-6xl px-4 py-10">
       <DocBody>
         <h2>1. The plans</h2>
         <p>
-          {SITE_SHORT} offers three seller plans. Each plan gives you a business listing, reviews,
-          messaging and analytics to different levels. The current plans, features and
-          prices are shown on the /pricing page and may change with notice.
+          {SITE_SHORT} offers Starter and Premium seller plans. Both plans include a
+          business listing and access to core marketplace features. The current
+          features and prices are shown on the /pricing page and may change with
+          reasonable notice.
         </p>
         <ul>
-          <li>Starter — a basic listing to get started and receive matched leads.</li>
-          <li>Professional — more services, portfolio and content publishing.</li>
-          <li>Business — multiple locations, team members and priority features for larger operations.</li>
+          <li>Starter — free, with 35 included credits and up to 3 eligible lead opportunities per monthly allocation period.</li>
+          <li>Premium — R300 per month, with 300 included credits per paid month and unlimited eligible lead opportunities.</li>
         </ul>
 
         <h2>2. Billing</h2>
         <p>
-          Subscriptions are billed monthly or annually in South African Rand (ZAR). Annual
-          billing is charged once a year. Prices on /pricing are the current prices; they
-          may change with notice. The amount is confirmed at checkout before you are
-          charged.
+          Starter is free. Premium is prepaid in South African Rand (ZAR) through a
+          hosted checkout. Monthly Premium is R300; if annual checkout is offered, its
+          full amount is charged upfront and the amount is shown before payment.
+          One-time checkout is available. If Paystack is configured, a seller may
+          separately opt in to automatic renewal at the displayed period and price.
         </p>
         <ul>
-          <li>Monthly: billed once per month.</li>
-          <li>Annual: billed once per year.</li>
-          <li>Prices on /pricing are the current prices; they may change with notice.</li>
+          <li>Starter activation does not require payment checkout.</li>
+          <li>A Premium period starts only after the payment provider confirms payment.</li>
+          <li>Annual Premium, when available, is charged once upfront; included credits are allocated monthly during the paid period.</li>
         </ul>
 
-        <h2>3. Free trial</h2>
+        <h2>3. Included credits</h2>
         <p>
-          New Starter plans may include a 7-day free trial. Nothing is charged during the
-          trial. If you cancel before the trial ends you will not be charged. If you
-          continue past the trial, your subscription begins and the standard terms apply.
-          You can usually only claim the trial once per account.
+          Starter receives 35 included credits per monthly allocation period. An active
+          Premium plan receives 300 included credits for each paid monthly allocation
+          period. Credits are granted only after the applicable activation or payment
+          is confirmed. Unused included credits do not roll over into the next
+          allocation period.
+        </p>
+        <p>
+          Purchased credit packs are tracked separately from included plan credits.
+          Their balance is preserved if Premium expires or the account returns to
+          Starter. Each lead unlock uses the number of credits shown before the
+          seller confirms the unlock.
         </p>
 
-        <h2>4. Renewal</h2>
+        <h2>4. Lead opportunities and unlocking</h2>
         <p>
-          Subscriptions renew automatically at the end of each billing period until you
-          cancel. You can turn auto-renewal off at any time — your plan stays active until
-          the end of the paid period, then lapses. The renewal date is shown in your
-          dashboard.
+          A lead opportunity is a relevant buyer request allocated to a seller. Starter
+          is limited to 3 unique eligible opportunities per monthly period. Reopening or
+          receiving another notification for the same request does not count it again.
+          Premium has no fixed monthly opportunity limit, but each lead contact unlock
+          still costs the credits displayed for that lead.
+        </p>
+        <p>
+          Buying extra credits does not increase Starter&apos;s 3-opportunity limit. An
+          unlock gives access only to the contact information authorised for that
+          specific request; it does not grant access to unrelated buyer records.
         </p>
 
-        <h2>5. Cancellation</h2>
+        <h2>5. Renewal and expiry</h2>
         <p>
-          You can cancel auto-renewal at any time from your dashboard or by contacting us.
-          Cancellation stops future billing; it does not usually entitle you to a refund for
-          the current paid period unless required by law or where we have made an error.
-          After cancellation and the end of the paid period, your listing may be paused or
-          removed.
+          Automatic renewal is optional and requires an explicit opt-in during
+          Paystack checkout. A reusable payment authorisation is stored securely by
+          the server; it is never available to the browser. Sellers can turn off
+          renewal from the billing page at any time, and Premium access remains
+          available until the already-paid period ends. One-time purchases require a
+          new confirmed checkout to extend Premium. Automatic renewals use the
+          amount explicitly agreed to at checkout; a later price change does not
+          silently change an existing renewal amount.
         </p>
-        <ul>
-          <li>Cancel auto-renewal anytime — no fee to cancel.</li>
-          <li>Your plan stays active until the end of the paid period.</li>
-          <li>After the period ends, access and listings may lapse.</li>
-        </ul>
-
-        <h2>6. Upgrading and downgrading</h2>
         <p>
-          You can change plans at any time. Upgrades usually take effect immediately and the
-          difference may be charged. Downgrades usually take effect at the end of the
-          current billing period. The checkout flow will confirm what applies before you
-          confirm.
+          If an automatic renewal fails, the system may retry after one day and then
+          after three days. Renewal stops after three failed attempts; Premium remains
+          available only through the paid-through date. If no confirmed renewal
+          extends the period, the account reverts to Starter.
         </p>
-
-        <h2>7. Failed payments</h2>
         <p>
-          If a payment fails, we may retry and your subscription may be paused or removed if
-          payment is not resolved within a reasonable time. You are responsible for keeping
-          your payment details up to date.
+          Downgrading does not remove a business listing, existing leads, quotes,
+          reviews, conversations or purchased credits. Starter limits apply after
+          Premium expires; Premium-only tools and features are no longer available.
         </p>
 
-        <h2>8. Refund policy</h2>
+        <h2>6. Failed payments and refunds</h2>
         <p>
-          For subscription refunds, see the Refund Policy. In summary: incorrect or
-          duplicate charges are investigated and may be refunded; change-of-mind refunds
-          after a subscription has activated are considered case by case and are not
-          automatically granted.
+          An unconfirmed or failed payment does not activate Premium or grant its
+          included credits. An initial checkout failure does not alter an existing
+          paid subscription. Failed automatic renewals follow the retry policy above.
+          For a refunded credit pack, unspent purchased credits are revoked; credits
+          already spent cannot be restored. A refunded current subscription period is
+          ended and its unused included credits are revoked. For subscription or
+          credit-pack refunds, see the Refund Policy. Incorrect or duplicate charges
+          and partial refunds are reviewed manually; other refund requests are
+          handled under that policy and applicable law.
         </p>
 
-        <h2>9. Price changes and notice</h2>
+        <h2>7. Price changes and notice</h2>
         <p>
-          We may change plan features and pricing with reasonable notice. Where a change
-          affects an existing subscription, we will usually give notice and let you
-          continue on your current plan terms for the remainder of your current billing
-          period.
+          We may change plan features and pricing with reasonable notice. A confirmed
+          paid period continues under the amount and terms presented at its checkout.
         </p>
 
-        <h2>10. Governing law</h2>
+        <h2>8. Governing law and questions</h2>
         <p>
           These Subscription Terms are governed by the laws of the Republic of South
           Africa.
@@ -123,6 +136,7 @@ export default function SubscriptionTermsPage() {
           <a href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a>.
         </p>
       </DocBody>
-    </Doc>
+      </main>
+    </div>
   );
 }

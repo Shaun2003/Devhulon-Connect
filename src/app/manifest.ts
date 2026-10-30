@@ -2,9 +2,9 @@ import type { MetadataRoute } from "next";
 import { SITE_NAME } from "@/lib/site";
 
 /**
- * PWA manifest — Devhulon Connect is mobile-first (most buyers are on phones with
+ * PWA manifest — DevhulonConnect is mobile-first (most buyers are on phones with
  * unreliable data), so it must be installable and open without browser chrome.
- * Icons use the supplied Devhulon Connect mark.
+ * Icons use the supplied DevhulonConnect mark.
  */
 export default function manifest(): MetadataRoute.Manifest {
   return {

@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
-import { ShieldCheck } from "lucide-react";
-import { Doc, DocHeader, DocBody } from "@/components/legal";
+import { DocBody } from "@/components/legal";
+import { PageHero } from "@/components/ui";
 import { CONTACT_EMAIL, SITE_NAME, SITE_SHORT } from "@/lib/site";
 
 export const metadata: Metadata = {
@@ -15,19 +15,21 @@ export const metadata: Metadata = {
   },
 };
 
-const UPDATED = "[Insert date]";
+const UPDATED = "29 October 2026";
 
 export default function SellerTermsPage() {
   return (
-    <Doc>
-      <DocHeader
+    <div className="min-h-screen">
+      <PageHero
         kicker="Legal"
         title="Seller Terms"
         sub={`These terms apply to sellers on ${SITE_NAME}. By listing you agree to them.`}
-        updated={UPDATED}
-        icon={ShieldCheck}
-      />
+        crumbs={[{ label: "Home", href: "/" }, { label: "Seller Terms" }]}
+      >
+        <p className="text-xs text-white/60">Last updated: {UPDATED}</p>
+      </PageHero>
 
+      <main className="mx-auto max-w-6xl px-4 py-10">
       <DocBody>
         <h2>1. Who these terms apply to</h2>
         <p>
@@ -106,6 +108,7 @@ export default function SellerTermsPage() {
           <a href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a>.
         </p>
       </DocBody>
-    </Doc>
+      </main>
+    </div>
   );
 }
