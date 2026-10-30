@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useAuth } from "@/components/AuthProvider";
 import { auth } from "@/lib/firebase";
+import { normalizePlanId } from "@/lib/plans";
 import {
   useRealtime,
   subscribeAdminDoc,
@@ -39,8 +40,7 @@ const fmtZAR = (n: unknown): string => {
 
 const planLabel = (plan: unknown): string => {
   if (!plan) return "None (free)";
-  const p = String(plan);
-  return p === "starter" ? "Starter" : p === "professional" ? "Professional" : p === "business" ? "Business" : p;
+  return normalizePlanId(plan) === "premium" ? "Premium" : "Starter";
 };
 
 const subStatusLabel = (status: unknown, plan: unknown): string => {
@@ -306,9 +306,9 @@ export default function AdminPage() {
           <span title={SLICE_HINT}>· {subsActive} active subs</span>
           <span title={SLICE_HINT}>· {fmtZAR(paymentsTotal)} paid</span>
         </div>
-        <Link href="/admin/guides" className="btn-sun text-sm"><KIcon name="penTool" size={14} className="inline shrink-0" /> Guide editor →</Link>
-        <Link href="/admin/analytics" className="btn-sun text-sm">Analytics →</Link>
-        <Link href="/admin/support" className="btn-sun text-sm">Support queue →</Link>
+        <Link href="/admin/guides" className="btn-sun text-sm"><KIcon name="penTool" size={14} className="inline shrink-0" /> Guide editor </Link>
+        <Link href="/admin/analytics" className="btn-sun text-sm">Analytics </Link>
+        <Link href="/admin/support" className="btn-sun text-sm">Support queue </Link>
       </header>
 
       <nav className="flex gap-2 overflow-x-auto">
@@ -407,8 +407,8 @@ export default function AdminPage() {
                       <p className="text-xs text-[#1d3a5f]/60 mt-0.5">
                         {isActive ? (
                           <>
-                            Renews {isoDate(s.current_period_end)}{" "}
-                            {s.cancel_at_period_end === true ? "(auto-renewal off)" : ""}
+                            Paid through {isoDate(s.current_period_end)}{" "}
+                            {s.cancel_at_period_end === true ? "(expires at period end)" : ""}
                             {status === "trialing" && (
                               <span className="text-[#a36508]"> · Trial ends {isoDate(s.trial_ends_at)}</span>
                             )}
@@ -536,9 +536,9 @@ export default function AdminPage() {
                     </div>
                     {(docs.idFront || docs.idBack || docs.proofAddress) && (
                       <div className="mt-2 flex flex-wrap gap-3 text-xs font-bold">
-                        {docs.idFront && <a href={docs.idFront} target="_blank" rel="noreferrer" className="text-[#558c2b] hover:underline">ID (front) →</a>}
-                        {docs.idBack && <a href={docs.idBack} target="_blank" rel="noreferrer" className="text-[#558c2b] hover:underline">ID (back) →</a>}
-                        {docs.proofAddress && <a href={docs.proofAddress} target="_blank" rel="noreferrer" className="text-[#558c2b] hover:underline">Proof of address →</a>}
+                        {docs.idFront && <a href={docs.idFront} target="_blank" rel="noreferrer" className="text-[#558c2b] hover:underline">ID (front) </a>}
+                        {docs.idBack && <a href={docs.idBack} target="_blank" rel="noreferrer" className="text-[#558c2b] hover:underline">ID (back) </a>}
+                        {docs.proofAddress && <a href={docs.proofAddress} target="_blank" rel="noreferrer" className="text-[#558c2b] hover:underline">Proof of address </a>}
                       </div>
                     )}
                   </div>
@@ -570,7 +570,7 @@ export default function AdminPage() {
                 <div className="min-w-0">
                   <b className="text-sm text-[#10243e]">{String(b.businessName ?? b.name ?? "")}</b>
                   <p className="text-xs text-[#1d3a5f]/60">
-                    {String(b.suburb ?? "")} · {String(b.phone ?? "")} · {String(b.ownerUid ?? "")}
+                    {String(b.suburb ?? "")} · {String(b.ownerUid ?? "")}
                   </p>
                 </div>
                 <span className="ml-auto flex gap-2">
@@ -677,7 +677,7 @@ export default function AdminPage() {
                 <p className="text-sm font-bold text-[#10243e]">{String(r.type ?? "")}: {String(r.label ?? r.targetId ?? "")}</p>
                 <p className="text-xs text-[#1d3a5f]/70 mt-0.5">{String(r.reason ?? "")}</p>
                 <div className="flex gap-2 mt-2">
-                  {r.type === "business" && <Link href={`/business/${String(r.targetId)}`} className="text-xs font-bold text-[#558c2b] hover:underline">Open listing →</Link>}
+                  {r.type === "business" && <Link href={`/business/${String(r.targetId)}`} className="text-xs font-bold text-[#558c2b] hover:underline">Open listing </Link>}
                   <button onClick={() => resolveReport(String(r.id)).catch((e) => alert(e instanceof Error ? e.message : "Failed"))} className="ml-auto rounded-lg bg-[#10243e] text-white text-xs font-bold px-3 py-1.5">Resolve</button>
                 </div>
               </div>

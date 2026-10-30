@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { Metadata } from "next";
-import { Doc, DocHeader, DocBody } from "@/components/legal";
+import { DocBody } from "@/components/legal";
+import { PageHero } from "@/components/ui";
 import { CONTACT_EMAIL, SITE_NAME, SITE_SHORT } from "@/lib/site";
 
 export const metadata: Metadata = {
@@ -9,18 +10,21 @@ export const metadata: Metadata = {
   description: `How ${SITE_SHORT} collects, uses and protects personal information under South Africa's POPIA.`,
 };
 
-const UPDATED = "[Insert date]";
+const UPDATED = "29 October 2026";
 
 export default function PrivacyPage() {
   return (
-    <Doc>
-      <DocHeader
+    <div className="min-h-screen">
+      <PageHero
         kicker="Legal"
         title="Privacy Policy"
         sub={`${SITE_NAME} respects your privacy. This policy explains what we collect, why, and your rights under South Africa's Protection of Personal Information Act (POPIA).`}
-        updated={UPDATED}
-      />
+        crumbs={[{ label: "Home", href: "/" }, { label: "Privacy Policy" }]}
+      >
+        <p className="text-xs text-white/60">Last updated: {UPDATED}</p>
+      </PageHero>
 
+      <main className="mx-auto max-w-6xl px-4 py-10">
       <DocBody>
         <h2>1. Who we are</h2>
         <p>
@@ -33,7 +37,7 @@ export default function PrivacyPage() {
         <h2>2. Information we collect</h2>
         <ul>
           <li><b>Account details</b> (if you register): name, email address, and your auth provider&apos;s user ID.</li>
-          <li><b>Business listings</b>: the information you submit for a listing (name, category, suburb, phone, WhatsApp, address, hours, description, photos).</li>
+          <li><b>Business listings</b>: public profile information such as name, category, service area, hours, description and photos. Business phone, WhatsApp, email, website, social links and street address are stored separately as private account data and are not displayed on public profiles.</li>
           <li><b>Quote/lead requests</b>: the service, area, contact number and message you include when requesting quotes, together with the date and version of the consent you gave.</li>
           <li><b>Reviews</b>: the display name, rating and review text you publish.</li>
           <li><b>Technical data</b>: standard server logs and first-party daily aggregate counts of broad page types, searches submitted and quote requests submitted.</li>
@@ -167,6 +171,7 @@ export default function PrivacyPage() {
           changes will be highlighted on the homepage for a reasonable period.
         </p>
       </DocBody>
-    </Doc>
+      </main>
+    </div>
   );
 }

@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { Metadata } from "next";
-import { Doc, DocHeader, DocBody } from "@/components/legal";
+import { DocBody } from "@/components/legal";
+import { PageHero } from "@/components/ui";
 import { CONTACT_EMAIL, SITE_NAME, SITE_SHORT } from "@/lib/site";
 
 export const metadata: Metadata = {
@@ -9,18 +10,21 @@ export const metadata: Metadata = {
   description: `How ${SITE_SHORT} may use cookies and similar technologies, and how to manage them.`,
 };
 
-const UPDATED = "[Insert date]";
+const UPDATED = "29 October 2026";
 
 export default function CookiePolicyPage() {
   return (
-    <Doc>
-      <DocHeader
+    <div className="min-h-screen">
+      <PageHero
         kicker="Legal"
         title="Cookie Policy"
         sub={`This explains how ${SITE_NAME} may use cookies and similar technologies, depending on the live website configuration.`}
-        updated={UPDATED}
-      />
+        crumbs={[{ label: "Home", href: "/" }, { label: "Cookie Policy" }]}
+      >
+        <p className="text-xs text-white/60">Last updated: {UPDATED}</p>
+      </PageHero>
 
+      <main className="mx-auto max-w-6xl px-4 py-10">
       <DocBody>
         <h2>1. What Are Cookies?</h2>
         <p>
@@ -85,6 +89,7 @@ export default function CookiePolicyPage() {
           <a href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a>.
         </p>
       </DocBody>
-    </Doc>
+      </main>
+    </div>
   );
 }

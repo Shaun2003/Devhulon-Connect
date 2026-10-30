@@ -3,7 +3,7 @@
  *
  * Why a route handler instead of direct Firestore writes: rules can verify
  * ownership and entitlement, but they cannot COUNT documents, so "10 items on
- * Starter / 50 on Professional / unlimited on Business" is not expressible in
+ * Starter / unlimited on Premium" is not expressible in
  * them. Here the caller is resolved from their verified ID token, the plan comes
  * from the server-owned subscription doc, and the existing items are counted with
  * the Admin SDK before anything is written — so a tampered client cannot exceed

@@ -1,7 +1,8 @@
 import { KIcon } from "@/lib/icons";
 import Link from "next/link";
 import type { Metadata } from "next";
-import { Doc, DocHeader, DocBody } from "@/components/legal";
+import { DocBody } from "@/components/legal";
+import { PageHero } from "@/components/ui";
 import ContactForm from "@/components/ContactForm";
 import { CONTACT_EMAIL, CONTACT_HOURS, SITE_LEGAL, SITE_SHORT } from "@/lib/site";
 
@@ -13,14 +14,16 @@ export const metadata: Metadata = {
 
 export default function ContactPage() {
   return (
-    <Doc>
-      <DocHeader
+    <div className="min-h-screen">
+      <PageHero
         kicker="Contact"
         title={`Talk to the ${SITE_SHORT} team`}
         sub={`We welcome enquiries about ${SITE_SHORT}, including platform access, service listings, subscriptions, privacy matters and complaints.`}
+        crumbs={[{ label: "Home", href: "/" }, { label: "Contact" }]}
       />
 
-      <div className="grid gap-3 sm:grid-cols-2">
+      <main className="mx-auto max-w-6xl space-y-6 px-4 py-10">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         <a href={`mailto:${CONTACT_EMAIL}`} className="hippo-card p-4 hover-lift anim-rise">
           <span className="icon-3d icon-3d-sm" aria-hidden="true"><KIcon name="message" size={20} /></span>
           <p className="mt-3 text-sm font-extrabold text-[#10243e]">General, seller, subscription and privacy enquiries</p>
@@ -33,7 +36,7 @@ export default function ContactPage() {
           <p className="break-all text-sm font-bold text-[#558c2b]">complaints@devhulonconnect.co.za</p>
           <p className="mt-1 text-xs text-[#1d3a5f]/60">Platform-related concerns and reports</p>
         </a>
-        <Link href="/advertise" className="hippo-card p-4 hover-lift anim-rise">
+        <Link href="/pricing" className="hippo-card p-4 hover-lift anim-rise">
           <span className="icon-3d icon-3d-sm" aria-hidden="true"><KIcon name="megaphone" size={20} /></span>
           <p className="font-extrabold text-[#10243e] text-sm mt-3">For businesses</p>
           <p className="text-sm text-[#1d3a5f]/75">Plans &amp; pricing</p>
@@ -90,6 +93,7 @@ export default function ContactPage() {
           {" "}for more information about using the platform and how we handle personal information.
         </p>
       </DocBody>
-    </Doc>
+      </main>
+    </div>
   );
 }

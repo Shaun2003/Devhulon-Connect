@@ -81,7 +81,7 @@ export default async function CityPage({ params }: { params: Promise<{ city: str
                     <p className="text-[11px] text-[#1d3a5f]/65 mt-0.5 line-clamp-1">{s.blurb}</p>
                   </div>
                   <span className="text-[#e7eef5] group-hover:text-[#558c2b] transition-colors flex items-center shrink-0 ml-2">
-                    <KIcon name="arrowRight" size={16} strokeWidth={2.2} />
+                    
                   </span>
                 </div>
               </Link>
@@ -114,7 +114,7 @@ export default async function CityPage({ params }: { params: Promise<{ city: str
                   </span>
                   <span className="text-xs text-[#1d3a5f]/70 mt-1 block leading-snug flex-1">{cat.blurb}</span>
                   <span className="inline-flex items-center gap-1 text-[11px] font-extrabold text-[#558c2b] mt-3 uppercase tracking-wider">
-                    Find pros <KIcon name="arrowRight" size={14} />
+                    Find pros 
                   </span>
                 </div>
               </Link>

@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { Users } from "lucide-react";
-import { Doc, DocHeader, DocBody } from "@/components/legal";
+import { DocBody } from "@/components/legal";
+import { PageHero } from "@/components/ui";
 import { CONTACT_EMAIL, SITE_NAME, SITE_SHORT } from "@/lib/site";
 
 export const metadata: Metadata = {
@@ -16,19 +16,21 @@ export const metadata: Metadata = {
   },
 };
 
-const UPDATED = "[Insert date]";
+const UPDATED = "29 October 2026";
 
 export default function BuyerTermsPage() {
   return (
-    <Doc>
-      <DocHeader
+    <div className="min-h-screen">
+      <PageHero
         kicker="Legal"
         title="Buyer Terms"
         sub={`These terms apply when you use ${SITE_NAME} to search for, enquire about or engage a service provider. They supplement the general Terms of Use and other applicable policies.`}
-        updated={UPDATED}
-        icon={Users}
-      />
+        crumbs={[{ label: "Home", href: "/" }, { label: "Buyer Terms" }]}
+      >
+        <p className="text-xs text-white/60">Last updated: {UPDATED}</p>
+      </PageHero>
 
+      <main className="mx-auto max-w-6xl px-4 py-10">
       <DocBody>
         <h2>1. Purpose</h2>
         <p>
@@ -36,7 +38,7 @@ export default function BuyerTermsPage() {
           read with the Refund Policy, Complaints &amp; Disputes Policy, Privacy Policy and other
           relevant policies.
         </p>
-        <h2>2. Role of Devhulon Connect</h2>
+        <h2>2. Role of DevhulonConnect</h2>
         <p>
           {SITE_SHORT} facilitates connections between buyers and service providers. Unless
           expressly stated otherwise, Devhulon is not the supplier of services listed by
@@ -119,6 +121,7 @@ export default function BuyerTermsPage() {
           South African law, subject to applicable mandatory rights and remedies.
         </p>
       </DocBody>
-    </Doc>
+      </main>
+    </div>
   );
 }

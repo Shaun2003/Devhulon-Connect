@@ -47,7 +47,7 @@ export default function LocationsPage() {
               const subs = suburbsForCity(c.slug);
               return (
                 <div key={c.slug} className="hippo-card p-5">
-                  <Link href={`/${c.slug}`} className="font-black text-lg text-[#10243e] hover:text-[#558c2b]">{c.name} <span className="text-xs font-bold text-[#558c2b]">View city hub →</span></Link>
+                  <Link href={`/${c.slug}`} className="font-black text-lg text-[#10243e] hover:text-[#558c2b]">{c.name} <span className="text-xs font-bold text-[#558c2b]">View city hub </span></Link>
                   <div className="mt-3 flex flex-wrap gap-2">
                     {subs.map((s) => (
                       <Link key={s.slug} href={`/${c.slug}/${s.slug}/plumbers`} className="rounded-full bg-[#f2f6fa] px-3 py-1.5 text-[13px] font-bold text-[#1d3a5f] hover:bg-[#10243e] hover:text-white transition">

@@ -127,7 +127,7 @@ export default async function SuburbPage({
                   <span className="font-bold text-[#10243e] text-[15px] group-hover:text-[#558c2b] leading-tight block">{cat.plural}</span>
                   <span className="text-xs text-[#1d3a5f]/70 mt-1 block leading-snug flex-1">{cat.blurb}</span>
                   <span className="inline-flex items-center gap-1 text-[11px] font-extrabold text-[#558c2b] mt-3 uppercase tracking-wider">
-                    Find pros <KIcon name="arrowRight" size={14} />
+                    Find pros 
                   </span>
                 </div>
               </Link>

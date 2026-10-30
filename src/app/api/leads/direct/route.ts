@@ -11,6 +11,7 @@
 import { adminDb, apiError, sessionFromRequest } from "@/lib/server/admin";
 import { createDirectLead } from "@/lib/server/lead-allocation";
 import { guardLeadRequest } from "@/lib/server/rate-limit";
+import { validateBuyerLeadFields } from "@/lib/server/lead-validation";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -34,6 +35,8 @@ export async function POST(req: Request) {
   if (limited) return limited;
 
   const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+  const validationError = validateBuyerLeadFields(body);
+  if (validationError) return apiError(validationError, 400);
 
   const result = await createDirectLead({
     requesterUid,

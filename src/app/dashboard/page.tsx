@@ -23,6 +23,7 @@ export default async function DashboardPage({
   const initialSellerTab =
     sp?.tab === "marketplace" ? "marketplace" :
     sp?.tab === "leads" || typeof sp?.lead === "string" ? "leads" :
+    sp?.tab === "settings" ? "settings" :
     undefined;
   return (
     <DashboardRouter

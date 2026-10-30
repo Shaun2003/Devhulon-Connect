@@ -36,6 +36,9 @@ export async function GET(req: Request) {
   return Response.json({
     ok: true,
     balance: wallet?.balance ?? 0,
+    subscriptionBalance: wallet?.subscriptionBalance ?? 0,
+    purchasedBalance: wallet?.purchasedBalance ?? wallet?.balance ?? 0,
+    subscriptionExpiresAt: wallet?.subscriptionExpiresAt ?? null,
     lifetimeEarned: wallet?.lifetimeEarned ?? 0,
     lifetimeSpent: wallet?.lifetimeSpent ?? 0,
     ledger: ledgerSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Record<string, unknown>) })),

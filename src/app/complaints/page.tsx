@@ -14,7 +14,8 @@
 
 import type { Metadata } from "next";
 import Link from "next/link";
-import { Doc, DocHeader, DocBody, Scale } from "@/components/legal";
+import { DocBody } from "@/components/legal";
+import { PageHero } from "@/components/ui";
 import { CONTACT_EMAIL, CONTACT_PHONE_DISPLAY, CONTACT_PHONE_TEL, CONTACT_HOURS, SITE_NAME, SITE_SHORT } from "@/lib/site";
 
 export const metadata: Metadata = {
@@ -32,15 +33,17 @@ const UPDATED = "23 October 2026";
 
 export default function ComplaintsPage() {
   return (
-    <Doc>
-      <DocHeader
+    <div className="min-h-screen">
+      <PageHero
         kicker="Legal"
         title="Complaints & Disputes"
         sub={`If something has gone wrong — a business that never arrived, a quote you dispute, or something on the site you believe is untrue — here is exactly what to do and what happens next.`}
-        updated={UPDATED}
-        icon={Scale}
-      />
+        crumbs={[{ label: "Home", href: "/" }, { label: "Complaints & Disputes" }]}
+      >
+        <p className="text-xs text-white/60">Last updated: {UPDATED}</p>
+      </PageHero>
 
+      <main className="mx-auto max-w-6xl px-4 py-10">
       <DocBody>
         <h2>1. First, tell the business directly</h2>
         <p>
@@ -132,6 +135,7 @@ export default function ComplaintsPage() {
             : null}
         </p>
       </DocBody>
-    </Doc>
+      </main>
+    </div>
   );
 }

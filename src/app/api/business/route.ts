@@ -7,8 +7,11 @@
  * POST creates a NEW listing:
  *   { name, category, suburb, city, province, phone, ... }
  *
- * Service areas steer lead matching (spec §14), so the plan cap — Starter 1,
- * Professional 2, Business unlimited — is evaluated here, on the server, from
+ * POST can also delete the caller's own listing and its private contacts:
+ *   { action: "delete", businessId }
+ *
+ * Service areas steer lead matching (spec §14), so the plan cap is evaluated
+ * here, on the server, from
  * the server-owned subscription doc. The client cannot widen its own matching
  * surface by bypassing the UI.
  *
@@ -27,7 +30,7 @@
  */
 
 import { adminDb, apiError, sessionFromRequest } from "@/lib/server/admin";
-import { entitlementFrom, readSubscription } from "@/lib/server/subscriptions";
+import { activateStarter, entitlementFrom, readSubscription } from "@/lib/server/subscriptions";
 import { hasCap, limitsFor, normalizePlanId, type PlanId } from "@/lib/plans";
 import { cleanPortfolioDraft, cleanServiceAreas, validatePortfolioDraft } from "@/lib/portfolio";
 
@@ -46,6 +49,17 @@ const nowIso = () => new Date().toISOString();
  */
 const ONBOARDING_PLAN: PlanId = "starter";
 
+const cleanWebsite = (value: unknown) => {
+  const raw = cleanStr(value, 200);
+  if (!raw) return "";
+  try {
+    const url = new URL(raw);
+    return url.protocol === "https:" || url.protocol === "http:" ? raw : "";
+  } catch {
+    return "";
+  }
+};
+
 /** Cap how many listings one account may hold. null = unlimited. */
 function listingLimitFor(plan: PlanId): number | null {
   return hasCap(plan, "multipleLocations") ? null : 1;
@@ -58,7 +72,7 @@ export async function PATCH(req: Request) {
   if (!session) return apiError("Sign in to manage your listing.", 401);
 
   const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
-  if (body.action !== "service-areas" && body.action !== "services") return apiError("Unknown action.", 400);
+  if (!["service-areas", "services", "contacts", "profile"].includes(String(body.action))) return apiError("Unknown action.", 400);
 
   const businessId = String(body.businessId ?? "").trim();
   if (!businessId) return apiError("Missing the listing id.");
@@ -76,11 +90,57 @@ export async function PATCH(req: Request) {
         !ownerEntitlement.entitled || !hasCap(ownerEntitlement.plan, "teamMembers")) {
       return apiError("That listing isn't on your account.", 403);
     }
+    if (body.action === "contacts" && membership.data()?.role !== "manager") {
+      return apiError("Only the listing owner or a team manager can manage private contacts.", 403);
+    }
   }
 
   const ent = entitlementFrom(await readSubscription(ownerUid));
   if (!ent.entitled) {
     return apiError("The listing owner's plan isn't active right now — renew before editing this listing.", 402);
+  }
+
+  if (body.action === "contacts") {
+    const phone = cleanStr(body.phone, 40);
+    const email = cleanStr(body.email, 120);
+    if (phone.replace(/[^\d]/g, "").length < 6) return apiError("Enter a valid business phone number.");
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return apiError("Enter a valid business email address.");
+    const contactRef = db.collection("business_contacts").doc(businessId);
+    await contactRef.set({
+      ownerUid,
+      phone,
+      email,
+      whatsapp: cleanStr(body.whatsapp, 40),
+      website: cleanWebsite(body.website),
+      facebook: hasCap(ent.plan, "socials") ? cleanWebsite(body.facebook) : "",
+      instagram: hasCap(ent.plan, "socials") ? cleanWebsite(body.instagram) : "",
+      address: cleanStr(body.address, 200),
+      updatedAt: nowIso(),
+    }, { merge: true });
+    return Response.json({ ok: true });
+  }
+
+  if (body.action === "profile") {
+    const name = cleanStr(body.name, 120);
+    const categorySlug = cleanStr(body.categorySlug, 60);
+    const citySlug = cleanStr(body.citySlug, 40);
+    const suburbSlug = cleanStr(body.suburbSlug, 60);
+    if (name.length < 2) return apiError("Enter a business name with at least 2 characters.");
+    if (!categorySlug) return apiError("Choose a business category.");
+    if (!citySlug || !suburbSlug) return apiError("Choose a city and suburb.");
+    const profile: Record<string, unknown> = {
+      name,
+      categorySlug,
+      citySlug,
+      suburbSlug,
+      hours: cleanStr(body.hours, 120),
+      description: cleanStr(body.description, 1200),
+      priceNote: cleanStr(body.priceNote, 120),
+      updatedAt: nowIso(),
+    };
+    if (hasCap(ent.plan, "photos")) profile.coverImageUrl = cleanStr(body.coverImageUrl, 400);
+    await ref.set(profile, { merge: true });
+    return Response.json({ ok: true });
   }
 
   if (body.action === "services") {
@@ -111,6 +171,42 @@ export async function PATCH(req: Request) {
 
 const cleanStr = (v: unknown, max: number): string => String(v ?? "").trim().slice(0, max);
 
+export async function GET(req: Request) {
+  const db = adminDb();
+  if (!db) return apiError("Server storage is not configured.", 503);
+  const session = await sessionFromRequest(req);
+  if (!session) return apiError("Sign in to view business contact settings.", 401);
+
+  const businessId = new URL(req.url).searchParams.get("businessId")?.trim() ?? "";
+  if (!businessId) return apiError("Missing the listing id.");
+  const businessSnap = await db.collection("businesses").doc(businessId).get();
+  if (!businessSnap.exists) return apiError("That listing no longer exists.", 404);
+  const ownerUid = String(businessSnap.data()?.ownerUid ?? "");
+  const membershipSnap = ownerUid && ownerUid !== session.uid
+    ? await db.collection("team_memberships").doc(`${ownerUid}__${session.uid}`).get()
+    : null;
+  const isManager = membershipSnap?.exists === true
+    && membershipSnap.data()?.status === "active"
+    && membershipSnap.data()?.role === "manager"
+    && hasCap(entitlementFrom(await readSubscription(ownerUid)).plan, "teamMembers");
+  if (ownerUid !== session.uid && !isManager) return apiError("That listing isn't on your account.", 403);
+
+  const contacts = await db.collection("business_contacts").doc(businessId).get();
+  const data = contacts.data() ?? {};
+  return Response.json({
+    ok: true,
+    contacts: {
+      phone: typeof data.phone === "string" ? data.phone : "",
+      email: typeof data.email === "string" ? data.email : "",
+      whatsapp: typeof data.whatsapp === "string" ? data.whatsapp : "",
+      website: typeof data.website === "string" ? data.website : "",
+      facebook: typeof data.facebook === "string" ? data.facebook : "",
+      instagram: typeof data.instagram === "string" ? data.instagram : "",
+      address: typeof data.address === "string" ? data.address : "",
+    },
+  });
+}
+
 /**
  * POST — create a seller's listing, with the plan's LISTING and SERVICE caps
  * enforced here (rules cannot count documents).
@@ -122,22 +218,47 @@ export async function POST(req: Request) {
   if (!session) return apiError("Sign in to list your business.", 401);
 
   const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+  if (body.action === "delete") {
+    const businessId = cleanStr(body.businessId, 120);
+    if (!businessId || businessId.includes("/")) return apiError("A valid listing id is required.");
+    const businessRef = db.collection("businesses").doc(businessId);
+    const businessSnap = await businessRef.get();
+    if (!businessSnap.exists) return apiError("That listing no longer exists.", 404);
+    if (businessSnap.data()?.ownerUid !== session.uid) {
+      return apiError("You can only delete a listing owned by your account.", 403);
+    }
+
+    const batch = db.batch();
+    batch.delete(businessRef);
+    batch.delete(db.collection("business_contacts").doc(businessId));
+    await batch.commit();
+    return Response.json({ ok: true });
+  }
+
   if (body.onboarding === true && !session.emailVerified) {
     return apiError("Verify your email address before activating your seller profile.", 403);
   }
 
-  // POPIA: publishing a listing makes the business's contact details publicly
-  // visible to anyone searching KASI. That is a disclosure and needs explicit
-  // consent, captured at the point of collection — the server refuses without it,
-  // so a scripted client cannot create a public listing by skipping the tick.
+  // Contact details are stored separately from the public listing. Consent is
+  // still explicit because they are personal information used to manage enquiries.
   if (body.consent !== true) {
-    return apiError("Please confirm you're happy for your business contact details to be published on this listing.");
+    return apiError("Please confirm you agree to store your business contact details for marketplace enquiries.");
   }
 
   const name = cleanStr(body.name, 120);
   const categorySlug = cleanStr(body.category, 60);
-  if (!name) return apiError("Business name is required.");
+  if (name.length < 2) return apiError("Enter a business name with at least 2 characters.");
   if (!categorySlug) return apiError("Category is required.");
+  const phone = cleanStr(body.phone, 40);
+  const email = cleanStr(body.email, 120);
+  const suburb = cleanStr(body.suburb, 60);
+  const city = cleanStr(body.city, 40);
+  const province = cleanStr(body.province, 60);
+  const description = cleanStr(body.desc, 2000);
+  if (phone.replace(/[^\d]/g, "").length < 6) return apiError("Enter a valid business phone number.");
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return apiError("Enter a valid business email address.");
+  if (!suburb || !city || !province) return apiError("Choose a province, city, and service area.");
+  if (description.length < 2) return apiError("Add a short business description.");
 
   const docId = body.onboarding === true
     ? `seller-${session.uid}`
@@ -152,6 +273,10 @@ export async function POST(req: Request) {
   }
 
   const sub = await readSubscription(session.uid);
+  if (!sub) {
+    const starter = await activateStarter(session.uid);
+    if (!starter.ok) return apiError(starter.error, 503);
+  }
   const ent = entitlementFrom(sub);
   // A seller with no subscription yet is on the onboarding plan, so the caps
   // below still bite on day one instead of being skipped.
@@ -165,7 +290,7 @@ export async function POST(req: Request) {
     const owned = await db.collection("businesses").where("ownerUid", "==", session.uid).count().get();
     if (owned.data().count >= listingLimit) {
       return apiError(
-        `Your ${plan} plan includes ${listingLimit} listing. Upgrade to Business for multiple listings.`,
+        `Your ${plan} plan includes ${listingLimit} listing. Upgrade to Premium for multiple listings.`,
         402
       );
     }
@@ -218,14 +343,11 @@ export async function POST(req: Request) {
     name,
     businessType: cleanStr(body.businessType, 50),
     categorySlug,
-    suburbSlug: cleanStr(body.suburb, 60),
-    citySlug: cleanStr(body.city, 40) || "south-africa",
-    provinceSlug: cleanStr(body.province, 60),
-    phone: cleanStr(body.phone, 40),
-    email: cleanStr(body.email, 120),
-    address: cleanStr(body.address, 200),
+    suburbSlug: suburb,
+    citySlug: city,
+    provinceSlug: province,
     hours: cleanStr(body.hours, 120) || "Call for hours",
-    description: cleanStr(body.desc, 2000),
+    description,
     priceNote: cleanStr(body.priceNote, 120) || "Price on request",
     services,
     serviceAreas,
@@ -236,10 +358,6 @@ export async function POST(req: Request) {
     // Capability-locked fields are stripped server-side against the SERVER's plan
     // reading. The client sent a `plan` value too, but that was self-asserted;
     // gating on it here would let a Starter seller claim Professional features.
-    whatsapp: hasCap(plan, "whatsapp") ? cleanStr(body.whatsapp, 40) || cleanStr(body.phone, 40) : "",
-    website: hasCap(plan, "website") ? cleanStr(body.website, 200) : "",
-    facebook: hasCap(plan, "socials") ? cleanStr(body.facebook, 200) : "",
-    instagram: hasCap(plan, "socials") ? cleanStr(body.instagram, 200) : "",
     coverImageUrl: hasCap(plan, "photos") ? cleanStr(body.coverImageUrl, 400) : "",
     photos: [],
     rating: 0,
@@ -254,6 +372,18 @@ export async function POST(req: Request) {
   };
   const batch = db.batch();
   batch.set(businessRef, businessData);
+  batch.set(db.collection("business_contacts").doc(docId), {
+    ownerUid: session.uid,
+    phone,
+    email,
+    whatsapp: cleanStr(body.whatsapp, 40) || cleanStr(body.phone, 40),
+    website: cleanWebsite(body.website),
+    facebook: hasCap(plan, "socials") ? cleanWebsite(body.facebook) : "",
+    instagram: hasCap(plan, "socials") ? cleanWebsite(body.instagram) : "",
+    address: cleanStr(body.address, 200),
+    createdAt: now,
+    updatedAt: now,
+  });
   if (portfolio) {
     const portfolioRef = db.collection("portfolio").doc();
     batch.set(portfolioRef, {

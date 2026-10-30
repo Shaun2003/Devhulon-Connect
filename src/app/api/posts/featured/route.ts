@@ -28,7 +28,7 @@ export async function POST(request: Request) {
   const entitlement = entitlementFrom(await readSubscription(session.uid));
   const capability = collection === "deals" ? "featuredDeals" : "featuredEvents";
   if (!entitlement.entitled || !hasCap(entitlement.plan, capability) || !hasCap(entitlement.plan, "promoFeatures")) {
-    return apiError("Featured deals and events are available on the Business plan.", 403);
+    return apiError("Featured deals and events are available on Premium.", 403);
   }
 
   const ref = db.collection(COLLECTIONS[collection]).doc(id);

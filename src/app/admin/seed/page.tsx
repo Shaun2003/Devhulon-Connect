@@ -41,7 +41,7 @@ export default function SeedPage() {
         <p className="mt-2 text-sm text-zinc-600">Signed in as {user.email} — writes reference data, businesses, jobs, events, deals &amp; articles. Safe to re-run (merge). Requires an active admin entry (admins/&lt;your-uid&gt;).</p>
       )}
       <button onClick={run} disabled={busy || !isFirebaseConfigured || !user} className="mt-4 rounded-xl bg-green-800 text-white font-bold px-5 py-3 disabled:opacity-50">
-        {busy ? "Seeding…" : "Seed Firestore →"}
+        {busy ? "Seeding…" : "Seed Firestore "}
       </button>
       <pre className="mt-4 rounded-xl bg-zinc-950 text-green-200 text-xs p-4 min-h-24 whitespace-pre-wrap">{log.join("\n") || "…"}</pre>
     </div>

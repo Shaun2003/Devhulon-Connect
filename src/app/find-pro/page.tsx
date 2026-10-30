@@ -51,13 +51,16 @@ const jsonLd = {
 export default async function FindProPage({
   searchParams,
 }: {
-  searchParams: Promise<{ need?: string; place?: string; city?: string }>;
+  searchParams: Promise<{ need?: string; place?: string; city?: string; serviceGroup?: string }>;
 }) {
   // Pre-fill from the URL so the hero search, the service chips and shared links
   // all land on a page that already shows matched pros.
   const sp = await searchParams;
   const initialNeed = (sp.need ?? "").trim();
   const initialPlace = (sp.place ?? sp.city ?? "").trim();
+  const initialServiceGroup = SERVICE_GROUPS.some((group) => group.slug === sp.serviceGroup)
+    ? sp.serviceGroup
+    : undefined;
   // Fetch only the indexed category/location candidates for a populated search.
   // The full catalogue is retained as a compatibility fallback when Admin SDK
   // credentials are not configured.
@@ -65,7 +68,7 @@ export default async function FindProPage({
   if (initialNeed.length > 1) {
     try {
       pool = adminDb()
-        ? await loadSellerCandidates({ need: initialNeed, place: initialPlace })
+        ? await loadSellerCandidates({ need: initialNeed, place: initialPlace, serviceGroupSlug: initialServiceGroup })
         : await loadSellerPool();
     } catch (error) {
       console.error("[KASI] initial Find Pro search failed:", error);
@@ -78,7 +81,7 @@ export default async function FindProPage({
       <PageHero
         kicker="Post a job · get matched"
         title="Find a pro near you"
-        sub="Tell us what you need and where. We find relevant local businesses and show you their details and contact options so you can choose who to approach."
+        sub="Describe the job and area. We match your request with up to three relevant local businesses so you can compare their responses. Your contact details are shared only for this request, with your consent."
         icon="search"
         crumbs={[{ label: "Home", href: "/" }, { label: "Find a pro" }]}
       />
@@ -89,7 +92,7 @@ export default async function FindProPage({
         dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
       />
 
-      <FindProClient initialNeed={initialNeed} initialPlace={initialPlace} initialPool={pool} />
+      <FindProClient initialNeed={initialNeed} initialPlace={initialPlace} initialServiceGroupSlug={initialServiceGroup} initialPool={pool} />
 
       {/* Cold-start: point people at a service group when nothing is typed yet. */}
       <section>
@@ -98,7 +101,7 @@ export default async function FindProPage({
           {SERVICE_GROUPS.map((g) => (
             <Link
               key={g.slug}
-              href={`/services?group=${g.slug}`}
+              href={`/find-pro?need=${encodeURIComponent(g.name)}&serviceGroup=${encodeURIComponent(g.slug)}`}
               className="hippo-card p-4 flex items-center gap-3 hover-lift group"
             >
               <IconPlate icon={g.icon} />

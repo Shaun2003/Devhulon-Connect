@@ -4,7 +4,7 @@
  * The only way a seller can start a paid subscription. Deliberately strict:
  *   • the caller is identified by their VERIFIED Firebase ID token, not a body field
  *   • the amount is resolved server-side from plans.ts, so a tampered client cannot
- *     buy the Business plan for R1
+ *     buy Premium for R1
  *   • a `payments` record is written first, so the webhook has an auditable trail
  *
  * Returns { url } — the hosted checkout page. The browser only ever redirects.
@@ -20,7 +20,7 @@ import { entitlementFrom, readSubscription } from "@/lib/server/subscriptions";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const PLAN_IDS: PlanId[] = ["starter", "professional", "business"];
+const PLAN_IDS: PlanId[] = ["premium"];
 
 export async function POST(req: Request) {
   const db = adminDb();
@@ -36,9 +36,9 @@ export async function POST(req: Request) {
     );
   }
 
-  let body: { planId?: string; period?: string; onboarding?: boolean };
+  let body: { planId?: string; period?: string; onboarding?: boolean; autoRenew?: boolean };
   try {
-    body = (await req.json()) as { planId?: string; period?: string; onboarding?: boolean };
+    body = (await req.json()) as { planId?: string; period?: string; onboarding?: boolean; autoRenew?: boolean };
   } catch {
     return apiError("Invalid request body.");
   }
@@ -51,6 +51,10 @@ export async function POST(req: Request) {
   if (!PLAN_IDS.includes(planId)) return apiError("Choose a valid plan.");
 
   const period: BillingPeriod = body.period === "annual" ? "annual" : "monthly";
+  const autoRenew = body.autoRenew === true;
+  if (autoRenew && activeProvider() !== "paystack") {
+    return apiError("Automatic renewal is currently available only with Paystack. Choose one-time checkout or configure Paystack.", 400);
+  }
   // Admin-set prices/limits must be loaded before the amount is resolved, or
   // /pricing would display the new price while checkout charged the old one.
   await loadPlanConfig();
@@ -89,6 +93,9 @@ export async function POST(req: Request) {
     status: "pending",
     provider,
     providerRef: null,
+    autoRenew,
+    autoRenewConsentAt: autoRenew ? new Date().toISOString() : null,
+    autoRenewTermsVersion: autoRenew ? "v1" : null,
     createdAt: new Date().toISOString(),
   });
 
@@ -101,6 +108,7 @@ export async function POST(req: Request) {
       amountCents: ZAR(rands),
       reference,
       callbackUrl,
+      autoRenew,
     });
 
     await db.collection("payments").doc(reference).set(

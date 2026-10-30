@@ -58,7 +58,7 @@ export async function GET(request: Request) {
 
   const entitlement = entitlementFrom(await readSubscription(session.uid));
   if (!entitlement.entitled || !hasCap(entitlement.plan, "leadExport")) {
-    return apiError("Lead export is available on the Business plan.", 403);
+    return apiError("Lead export is available on Premium.", 403);
   }
 
   const [leadDocs, unlockDocs] = await Promise.all([

@@ -54,7 +54,7 @@ export async function POST(request: Request) {
 
   const entitlement = entitlementFrom(await readSubscription(session.uid));
   if (!entitlement.entitled || !hasCap(entitlement.plan, "teamMembers")) {
-    return apiError("Team members are available on the Business plan.", 403);
+    return apiError("Team members are available on Premium.", 403);
   }
 
   const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
@@ -194,7 +194,7 @@ export async function PATCH(request: Request) {
 
   if (result.error === "missing") return apiError("This team invitation no longer exists.", 404);
   if (result.error === "resolved") return apiError("This team invitation has already been answered.", 409);
-  if (result.error === "plan") return apiError(`${ownerName} no longer has an active Business plan with team access.`, 409);
+  if (result.error === "plan") return apiError(`${ownerName} no longer has an active Premium plan with team access.`, 409);
   if (result.error === "limit") return apiError(`${ownerName}'s team has no available seats right now.`, 409);
   return Response.json({ ok: true, status: result.status });
 }

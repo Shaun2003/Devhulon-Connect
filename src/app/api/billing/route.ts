@@ -1,9 +1,9 @@
 /**
  * /api/billing
  *
- *   GET                       → the caller's own entitlement (plan, trial countdown,
+ *    GET                       → the caller's own entitlement (plan, lead allowance,
  *                               lead allowance). Safe to call from the dashboard.
- *   POST { action: "start-trial" | "cancel" | "resume" | "verify" }
+ *   POST { action: "activate-starter" | "cancel" | "resume" | "verify" }
  *
  * Every action is scoped to the verified caller's uid, so one seller can never
  * touch another seller's subscription.
@@ -16,10 +16,11 @@ import {
   cancelSubscription,
   entitlementFor,
   readSubscription,
-  startTrial,
+  activateStarter,
 } from "@/lib/server/subscriptions";
 import { getCreditPack } from "@/lib/credits";
 import { grantCreditsForPurchase } from "@/lib/server/credits";
+import { saveReusablePaystackAuthorization } from "@/lib/server/billing-renewals";
 import type { BillingPeriod, PlanId } from "@/lib/plans";
 
 export const runtime = "nodejs";
@@ -47,16 +48,16 @@ export async function POST(req: Request) {
   }
 
   switch (body.action) {
-    /* ── 7-day Starter trial (spec §22) — Starter only, once per account ── */
-    case "start-trial": {
+    /* ── Starter is free and does not require payment checkout. ─────────── */
+    case "activate-starter": {
       if (body.onboarding === true && !session.emailVerified) {
-        return apiError("Verify your email address before starting your seller trial.", 403);
+        return apiError("Verify your email address before activating your seller plan.", 403);
       }
-      const res = await startTrial(session.uid, "starter");
+      const res = await activateStarter(session.uid);
       if (!res.ok) {
         return Response.json(
           { ok: false, error: res.error, entitlement: res.entitlement ?? null },
-          { status: res.error === "trial-already-used" ? 409 : 400 }
+          { status: 400 }
         );
       }
       return Response.json({ ok: true, entitlement: res.entitlement });
@@ -75,7 +76,14 @@ export async function POST(req: Request) {
       if (!doc) return apiError("No subscription found.", 404);
       const ref = db.collection("subscriptions").doc(session.uid);
       await ref.set(
-        { subscription_status: "active", status: "active", cancel_at_period_end: false, updatedAt: new Date().toISOString() },
+        {
+          subscription_status: "active",
+          status: "active",
+          cancel_at_period_end: false,
+          auto_renew: false,
+          next_renewal_at: null,
+          updatedAt: new Date().toISOString(),
+        },
         { merge: true }
       );
       return Response.json({ ok: true, entitlement: await entitlementFor(session.uid) });
@@ -93,11 +101,24 @@ export async function POST(req: Request) {
       const payment = snap.data() as {
         ownerUid: string; planId: string; period: string; amountCents: number; status: string;
         kind?: string; packId?: string; provider?: string;
+        autoRenew?: boolean;
       };
       // A seller may only confirm their own payment.
       if (payment.ownerUid !== session.uid) return apiError("Not your payment.", 403);
 
       if (payment.status === "paid") {
+        if (payment.autoRenew === true && payment.provider === "paystack") {
+          const verified = await verifyPaystackTransaction(reference);
+          if (verified.ok && verified.amountCents === payment.amountCents && verified.authorizationPresent) {
+            await saveReusablePaystackAuthorization(
+              payment.ownerUid,
+              reference,
+              verified.customerEmail,
+              verified.authorizationCode,
+              verified.authorizationReusable === true
+            );
+          }
+        }
         return Response.json({ ok: true, alreadyPaid: true, entitlement: await entitlementFor(session.uid) });
       }
 
@@ -142,6 +163,16 @@ export async function POST(req: Request) {
         providerRef: null,
       });
       if (!res.ok) return apiError(res.error, 500);
+
+      if (payment.autoRenew === true) {
+        await saveReusablePaystackAuthorization(
+          payment.ownerUid,
+          reference,
+          verified.customerEmail,
+          verified.authorizationCode,
+          verified.authorizationReusable === true
+        );
+      }
 
       return Response.json({ ok: true, entitlement: res.entitlement });
     }

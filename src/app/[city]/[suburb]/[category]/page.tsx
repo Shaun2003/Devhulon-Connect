@@ -1,8 +1,7 @@
 "use client";
-import { use } from "react";
 import { useState } from "react";
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, useParams } from "next/navigation";
 import Gate from "@/components/Gate";
 import { getCity, getSuburb, suburbsForCity } from "@/data/locations";
 import { getCategory } from "@/data/categories";
@@ -10,15 +9,15 @@ import { subscribeBusinessesByCity, useReviewRatings, useRealtime } from "@/lib/
 import BusinessCard from "@/components/BusinessCard";
 import ComparisonTable from "@/components/ComparisonTable";
 import SaveSearchButton from "@/components/SaveSearchButton";
-import { AdSlot } from "@/components/ui";
+import { AdSlot, PageHero } from "@/components/ui";
 import { Faq, CtaBand } from "@/components/hippo";
 import { isOpenNow } from "@/lib/utils";
 import { KIcon } from "@/lib/icons";
 import { toBusiness, applyReviewRatings } from "@/data/businesses";
 import { SITE_SHORT } from "@/lib/site";
 
-export default function SuburbCategoryPage({ params }: { params: Promise<{ city: string; suburb: string; category: string }> }) {
-  const { city, suburb, category } = use(params);
+export default function SuburbCategoryPage() {
+  const { city, suburb, category } = useParams<{ city: string; suburb: string; category: string }>();
   const c = getCity(city);
   const s = getSuburb(city, suburb);
   const cat = getCategory(category);
@@ -48,7 +47,7 @@ export default function SuburbCategoryPage({ params }: { params: Promise<{ city:
       ? cat.faqs
       : [
           { q: `How much do ${cat.plural.toLowerCase()} cost in ${s.name}?`, a: cat.priceGuide },
-          { q: `How do I find a trusted ${cat.name.toLowerCase()} near me?`, a: `Compare ratings, verified badges, opening hours and real reviews on ${SITE_SHORT}, then request a free quote or WhatsApp the pro directly.` },
+          { q: `How do I find a trusted ${cat.name.toLowerCase()} near me?`, a: `Compare ratings, verified badges, opening hours and real reviews on ${SITE_SHORT}, then request a free quote or message the business through the platform.` },
           { q: `Does it cost anything to request a quote on ${SITE_SHORT}?`, a: "No — requesting a quote is free and may be shared with up to 3 eligible local businesses. A reply is not guaranteed." },
         ];
   const faqLd = {
@@ -63,32 +62,27 @@ export default function SuburbCategoryPage({ params }: { params: Promise<{ city:
 
   return (
     <Gate>
-      <div className="max-w-6xl mx-auto px-4 py-8 space-y-8">
+      <>
         <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(faqLd) }} />
-        <nav className="text-xs text-[#1d3a5f]/60 flex flex-wrap gap-1">
-          <Link href="/" className="hover:underline">Home</Link> <span>/</span>
-          <Link href={`/${city}`} className="hover:underline">{c.name}</Link> <span>/</span>
-          <span className="font-bold text-[#10243e]">{s.name}</span> <span>/</span>
-          <span className="text-[#10243e]">{cat.plural}</span>
-        </nav>
-
-        <header className="bg-gradient-to-br from-[#0b1e33] via-[#173d59] to-[#0b1e33] px-4 py-10 text-center relative flex flex-col justify-center min-h-[280px] rounded-[2rem] overflow-hidden sm:py-16 sm:min-h-[340px]">
-          <div className="relative z-10 mx-auto flex w-full min-w-0 max-w-4xl flex-col items-center">
-            <p className="mt-1 text-xs font-extrabold uppercase tracking-[0.18em] text-[#ffc72c]">
-              {s.name} · {c.name} · Compare {list.length} locals
-            </p>
-            <h1 className="mt-3 break-words text-3xl font-black tracking-tight text-white drop-shadow-xl sm:text-5xl">{cat.plural} in {s.name}</h1>
-            <p className="mx-auto mt-3 max-w-3xl break-words text-sm text-white/90 drop-shadow-md sm:mt-4 sm:text-lg">
-              {s.blurb} {cat.blurb} Compare prices, hours, ratings and WhatsApp contacts — then request a free quote.
-            </p>
-            <div className="mt-5 flex w-full flex-wrap items-center justify-center gap-3 sm:mt-8">
-              <Link href={`/request-quote?category=${encodeURIComponent(cat.slug)}&need=${encodeURIComponent(cat.plural)}&suburb=${s.slug}`} className="bg-[#7ac142] text-[#0b1e33] font-bold py-3 px-6 rounded-full hover:bg-[#8fd158] transition shadow-lg text-sm">Get {cat.plural.toLowerCase()} quotes — free →</Link>
-              <a href="#price-guide" className="inline-flex items-center rounded-full border-2 border-white/40 bg-white/10 px-6 py-3 font-bold text-sm hover:bg-white/20 transition text-white backdrop-blur-sm">See price guide</a>
-              {all.live && <span className="chip-live ml-2">Live</span>}
-            </div>
+        <PageHero
+          kicker={`${s.name} · ${c.name} · Compare ${list.length} locals`}
+          title={`${cat.plural} in ${s.name}`}
+          sub={`${s.blurb} ${cat.blurb} Compare prices, hours and ratings, then request a free quote without exposing private contact details.`}
+          crumbs={[
+            { label: "Home", href: "/" },
+            { label: c.name, href: `/${city}` },
+            { label: s.name, href: `/${city}/${suburb}` },
+            { label: cat.plural },
+          ]}
+        >
+          <div className="flex flex-wrap items-center gap-3">
+            <Link href={`/request-quote?category=${encodeURIComponent(cat.slug)}&need=${encodeURIComponent(cat.plural)}&suburb=${s.slug}`} className="bg-[#7ac142] text-[#0b1e33] font-bold py-3 px-6 rounded-full hover:bg-[#8fd158] transition shadow-lg text-sm">Get {cat.plural.toLowerCase()} quotes — free </Link>
+            <a href="#price-guide" className="inline-flex items-center rounded-full border-2 border-white/40 bg-white/10 px-6 py-3 font-bold text-sm hover:bg-white/20 transition text-white backdrop-blur-sm">See price guide</a>
+            {all.live && <span className="chip-live">Live</span>}
           </div>
-        </header>
+        </PageHero>
 
+        <main className="max-w-6xl mx-auto px-4 py-10 space-y-8">
         <section>
           <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
             <h2 className="text-xl font-black text-[#10243e] tracking-tight">Compare {cat.plural.toLowerCase()} side-by-side</h2>
@@ -145,7 +139,8 @@ export default function SuburbCategoryPage({ params }: { params: Promise<{ city:
         </section>
 
         <CtaBand />
-      </div>
+        </main>
+      </>
     </Gate>
   );
 }

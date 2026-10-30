@@ -9,7 +9,7 @@
  *     a retry can never charge twice,
  *   • the contact is returned ONLY on success, and a conversation is opened.
  *
- * 402 = not enough credits (the UI shows the buy-credits prompt).
+ * 402 = insufficient credits or Starter opportunity cap reached.
  * 404 = the lead is gone. 409 = already unlocked (returned idempotently).
  */
 
@@ -39,7 +39,9 @@ export async function POST(req: Request) {
   const result = await unlockLeadContact(session.uid, leadId);
 
   if (!result.ok) {
-    const status = result.reason === "insufficient" ? 402 : result.reason === "not-found" ? 404 : 400;
+    const status = result.reason === "insufficient" || result.reason === "limit"
+      ? 402
+      : result.reason === "not-found" ? 404 : 400;
     return apiError(result.error, status);
   }
 

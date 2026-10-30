@@ -17,8 +17,19 @@
 
 import { adminDb, apiError } from "@/lib/server/admin";
 import { parseWebhookEvent, verifyWebhook } from "@/lib/server/payments";
-import { activateSubscription, markPastDue } from "@/lib/server/subscriptions";
-import { grantCreditsForPurchase } from "@/lib/server/credits";
+import { activateSubscription } from "@/lib/server/subscriptions";
+import {
+  grantCreditsForPurchase,
+  reversePurchasedCredits,
+  reverseSubscriptionCredits,
+} from "@/lib/server/credits";
+import { getCreditPack } from "@/lib/credits";
+import { isFullRefund } from "@/lib/billing-policy";
+import {
+  recordBillingRenewalFailure,
+  saveReusablePaystackAuthorization,
+  stopRenewalForReview,
+} from "@/lib/server/billing-renewals";
 import type { BillingPeriod, PlanId } from "@/lib/plans";
 
 export const runtime = "nodejs";
@@ -34,6 +45,7 @@ type PaymentDoc = {
   kind?: string;
   packId?: string;
   credits?: number;
+  autoRenew?: boolean;
 };
 
 export async function POST(req: Request) {
@@ -59,14 +71,46 @@ export async function POST(req: Request) {
   }
 
   if (event.type === "refunded") {
-    // Record the refund; leave the subscription decision to an admin/ops action.
-    if (event.reference) {
-      await db.collection("payments").doc(event.reference).set(
-        { status: "refunded", updatedAt: new Date().toISOString() },
-        { merge: true }
-      );
+    if (!event.reference) return Response.json({ ok: true, ignored: "refund-without-reference" });
+    const payRef = db.collection("payments").doc(event.reference);
+    const snap = await payRef.get();
+    if (!snap.exists) return Response.json({ ok: true, ignored: "unknown-refund-reference" });
+    const payment = snap.data() as PaymentDoc;
+    if (payment.status === "refunded") return Response.json({ ok: true, idempotent: true });
+    if (!isFullRefund(event.amountCents, payment.amountCents)) {
+      await payRef.set({
+        status: "refund_review_required",
+        refundAmountCents: event.amountCents,
+        updatedAt: new Date().toISOString(),
+      }, { merge: true });
+      return Response.json({ ok: true, reviewRequired: true });
     }
-    return Response.json({ ok: true, refunded: true });
+    if (payment.status === "amount_mismatch") {
+      await payRef.set({
+        status: "refunded",
+        refundedAt: new Date().toISOString(),
+        refundReconciliation: { entitlementGranted: false },
+        updatedAt: new Date().toISOString(),
+      }, { merge: true });
+      return Response.json({ ok: true, refunded: true, entitlementGranted: false });
+    }
+    if (payment.status !== "paid") return apiError("Refund arrived before payment confirmation; retry later.", 409);
+
+    let reconciliation: Record<string, unknown> = {};
+    if (payment.kind === "credits") {
+      const pack = getCreditPack(String(payment.packId ?? ""));
+      if (!pack) return apiError("Refund references an unknown credit pack.", 500);
+      reconciliation = await reversePurchasedCredits(payment.ownerUid, event.reference, pack.credits);
+    } else {
+      reconciliation = await reverseSubscriptionCredits(payment.ownerUid, event.reference);
+    }
+    await payRef.set({
+      status: "refunded",
+      refundedAt: new Date().toISOString(),
+      refundReconciliation: reconciliation,
+      updatedAt: new Date().toISOString(),
+    }, { merge: true });
+    return Response.json({ ok: true, refunded: true, reconciliation });
   }
 
   if (!event.reference) return Response.json({ ok: true, ignored: "no-reference" });
@@ -80,14 +124,37 @@ export async function POST(req: Request) {
   const payment = snap.data() as PaymentDoc;
 
   if (event.type === "failed") {
+    if (payment.status === "paid") return Response.json({ ok: true, idempotent: true });
     await payRef.set({ status: "failed", updatedAt: new Date().toISOString() }, { merge: true });
-    await markPastDue(payment.ownerUid, event.providerRef ?? null);
+    if (payment.kind === "renewal") {
+      await recordBillingRenewalFailure(payment.ownerUid, event.reference, "Renewal payment failed.", new Date());
+    }
     return Response.json({ ok: true, failed: true });
   }
 
   // ── paid ────────────────────────────────────────────────────────────────
   if (payment.status === "paid") {
+    if (
+      payment.autoRenew === true &&
+      provider === "paystack" &&
+      payment.kind !== "renewal"
+    ) {
+      await saveReusablePaystackAuthorization(
+        payment.ownerUid,
+        event.reference,
+        event.customerEmail,
+        event.authorizationCode,
+        event.authorizationReusable === true
+      );
+    }
     return Response.json({ ok: true, idempotent: true });
+  }
+  if (typeof event.amountCents === "number" && event.amountCents !== payment.amountCents) {
+    await payRef.set({ status: "amount_mismatch", updatedAt: new Date().toISOString() }, { merge: true });
+    if (payment.kind === "renewal") {
+      await stopRenewalForReview(payment.ownerUid, event.reference, new Date());
+    }
+    return Response.json({ ok: true, reviewRequired: true, reason: "amount-mismatch" });
   }
 
   // A credit-pack purchase tops up the wallet; it does NOT touch the plan.
@@ -113,6 +180,20 @@ export async function POST(req: Request) {
   });
 
   if (!result.ok) return apiError(result.error, 500);
+
+  if (
+    payment.autoRenew === true &&
+    provider === "paystack" &&
+    payment.kind !== "renewal"
+  ) {
+    await saveReusablePaystackAuthorization(
+      payment.ownerUid,
+      event.reference,
+      event.customerEmail,
+      event.authorizationCode,
+      event.authorizationReusable === true
+    );
+  }
 
   return Response.json({
     ok: true,

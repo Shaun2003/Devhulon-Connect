@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
-import { ShieldCheck } from "lucide-react";
-import { Doc, DocHeader, DocBody } from "@/components/legal";
+import { DocBody } from "@/components/legal";
+import { PageHero } from "@/components/ui";
 import { CONTACT_EMAIL, SITE_NAME, SITE_SHORT } from "@/lib/site";
 
 export const metadata: Metadata = {
@@ -15,19 +15,21 @@ export const metadata: Metadata = {
   },
 };
 
-const UPDATED = "[Insert date]";
+const UPDATED = "29 October 2026";
 
 export default function CommunityGuidelinesPage() {
   return (
-    <Doc>
-      <DocHeader
+    <div className="min-h-screen">
+      <PageHero
         kicker="Legal"
         title="Community Guidelines"
         sub={`Participate respectfully on ${SITE_NAME}. These guidelines apply to everyone.`}
-        updated={UPDATED}
-        icon={ShieldCheck}
-      />
+        crumbs={[{ label: "Home", href: "/" }, { label: "Community Guidelines" }]}
+      >
+        <p className="text-xs text-white/60">Last updated: {UPDATED}</p>
+      </PageHero>
 
+      <main className="mx-auto max-w-6xl px-4 py-10">
       <DocBody>
         <h2>1. Be respectful</h2>
         <p>
@@ -88,6 +90,7 @@ export default function CommunityGuidelinesPage() {
           <a href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a>
         </p>
       </DocBody>
-    </Doc>
+      </main>
+    </div>
   );
 }

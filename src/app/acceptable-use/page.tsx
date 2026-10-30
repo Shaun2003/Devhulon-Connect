@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
-import { Scale } from "lucide-react";
-import { Doc, DocHeader, DocBody } from "@/components/legal";
+import { DocBody } from "@/components/legal";
+import { PageHero } from "@/components/ui";
 import { CONTACT_EMAIL, SITE_NAME, SITE_SHORT } from "@/lib/site";
 
 export const metadata: Metadata = {
@@ -15,19 +15,21 @@ export const metadata: Metadata = {
   },
 };
 
-const UPDATED = "[Insert date]";
+const UPDATED = "29 October 2026";
 
 export default function AcceptableUsePage() {
   return (
-    <Doc>
-      <DocHeader
+    <div className="min-h-screen">
+      <PageHero
         kicker="Legal"
         title="Acceptable Use"
         sub={`What you may and may not do on ${SITE_NAME}.`}
-        updated={UPDATED}
-        icon={Scale}
-      />
+        crumbs={[{ label: "Home", href: "/" }, { label: "Acceptable Use" }]}
+      >
+        <p className="text-xs text-white/60">Last updated: {UPDATED}</p>
+      </PageHero>
 
+      <main className="mx-auto max-w-6xl px-4 py-10">
       <DocBody>
         <h2>1. You must not</h2>
         <p>Using {SITE_SHORT}, you must not:</p>
@@ -87,6 +89,7 @@ export default function AcceptableUsePage() {
           <a href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a>
         </p>
       </DocBody>
-    </Doc>
+      </main>
+    </div>
   );
 }

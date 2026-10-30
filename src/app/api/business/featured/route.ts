@@ -17,7 +17,7 @@ export async function POST(request: Request) {
 
   const entitlement = entitlementFrom(await readSubscription(session.uid));
   if (!entitlement.entitled || !hasCap(entitlement.plan, "featuredProfile")) {
-    return apiError("Featured profile placement is available on Professional and Business plans.", 403);
+    return apiError("Featured profile placement is available on Premium.", 403);
   }
   const ref = db.collection("businesses").doc(businessId);
   const snap = await ref.get();

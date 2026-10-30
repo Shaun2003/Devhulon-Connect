@@ -12,9 +12,6 @@ type BizMeta = {
   categorySlug?: string;
   suburbSlug?: string;
   citySlug?: string;
-  phone?: string;
-  whatsapp?: string;
-  address?: string;
   hours?: string;
   description?: string;
   priceNote?: string;
@@ -90,7 +87,7 @@ export async function generateMetadata({
   const title = `${b.name} — ${catName} in ${suburbName}, ${cityName}`;
   const description = (
     b.description?.trim() ||
-    `${b.name} in ${suburbName}, ${cityName}. Phone, WhatsApp, opening hours, services and reviews for this ${catName.toLowerCase()}.`
+    `${b.name} in ${suburbName}, ${cityName}. Opening hours, services, prices and reviews for this ${catName.toLowerCase()}. Request a quote through ${SITE_SHORT}.`
   ).slice(0, 300);
   const image = b.coverImageUrl || b.photos?.[0];
   const url = `${SITE_URL}/business/${id}`;
@@ -167,11 +164,9 @@ export default async function BusinessPage({ params }: { params: Promise<{ id: s
       "@id": `${base}/business/${id}`,
       name: b.name,
       description: b.description,
-      ...(b.phone ? { telephone: b.phone } : {}),
       ...(image ? { image } : {}),
       address: {
         "@type": "PostalAddress",
-        streetAddress: b.address,
         addressLocality: cityName,
         addressRegion: "Gauteng",
         addressCountry: "ZA",

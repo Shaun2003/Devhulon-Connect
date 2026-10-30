@@ -69,7 +69,7 @@ export async function POST(request: Request) {
       : 0;
     if (limitedSeller && messageLimit !== null && sentThisMonth >= messageLimit) {
       return {
-        error: `You've used your ${messageLimit} seller messages this month. Upgrade to Professional for unlimited messaging.`,
+        error: `You've used your ${messageLimit} seller messages this month. Upgrade to Premium for unlimited messaging.`,
         status: 403,
       };
     }

@@ -16,7 +16,7 @@ export default function AdminSupportPage() {
           <p className="text-xs font-extrabold uppercase tracking-[0.16em] text-[#558c2b]">Admin console</p>
           <h1 className="text-2xl font-black text-[#10243e]">Support requests</h1>
         </div>
-        <Link href="/admin" className="btn-sun text-sm">Back to admin →</Link>
+        <Link href="/admin" className="btn-sun text-sm">Back to admin </Link>
       </header>
       <SupportQueue />
     </main>

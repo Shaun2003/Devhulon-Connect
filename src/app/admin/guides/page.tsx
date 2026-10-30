@@ -88,7 +88,7 @@ export default function GuideEditorPage() {
         <label className="block text-sm font-bold text-[#10243e]">Body
           <textarea value={body} onChange={(e) => setBody(e.target.value)} rows={14} className={`mt-1 ${inputCls} font-mono text-xs`} />
         </label>
-        <button disabled={busy} className="btn-hippo text-sm disabled:opacity-60">{busy ? "Saving…" : "Publish guide →"}</button>
+        <button disabled={busy} className="btn-hippo text-sm disabled:opacity-60">{busy ? "Saving…" : "Publish guide "}</button>
         {msg && <p className="text-sm font-bold text-[#3c6b1d] bg-[#e8f6d8] rounded-xl px-3 py-2">{msg}</p>}
         {err && <p className="text-sm font-bold text-red-700 bg-red-50 rounded-xl px-3 py-2">{err}</p>}
       </form>

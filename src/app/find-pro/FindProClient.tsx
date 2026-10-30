@@ -15,22 +15,24 @@ import { useRealtime, useReviewRatings, subscribeTopBusinesses, type RealtimeErr
 import { applyReviewRatings, toBusiness, type Business } from "@/data/businesses";
 import { PlaceSuggestions } from "@/components/SearchBar";
 import { trackAnalyticsEvent } from "@/lib/track-analytics";
+import { SERVICE_GROUPS } from "@/data/taxonomy";
 
 /**
  * The buyer-facing "Find a pro" screen.
  *
  * A buyer types what they need and where, and gets a ranked list of local sellers
- * with a one-tap Call / WhatsApp button — no directory browsing, no admin in the
- * loop. Submitting the form broadcasts the request to the top matches so those
- * sellers are notified directly and can call back.
+ * and request a quote without exposing seller contact details. Submitting the
+ * form distributes a contact-stripped request to eligible matching sellers.
  */
 export default function FindProClient({
   initialNeed = "",
   initialPlace = "",
+  initialServiceGroupSlug,
   initialPool = [],
 }: {
   initialNeed?: string;
   initialPlace?: string;
+  initialServiceGroupSlug?: string;
   /** Server-fetched live listings, so matches render before hydration. */
   initialPool?: Business[];
 }) {
@@ -58,8 +60,9 @@ export default function FindProClient({
 
   const resolvedPlace = useMemo(() => resolvePlace(place), [place]);
   const guessedCategory = useMemo(() => matchCategory(need), [need]);
-  const searchKey = JSON.stringify([need.trim(), place.trim()]);
-  const initialSearchKey = JSON.stringify([initialNeed.trim(), initialPlace.trim()]);
+  const selectedGroup = SERVICE_GROUPS.find((group) => group.slug === initialServiceGroupSlug);
+  const searchKey = JSON.stringify([need.trim(), place.trim(), initialServiceGroupSlug ?? ""]);
+  const initialSearchKey = JSON.stringify([initialNeed.trim(), initialPlace.trim(), initialServiceGroupSlug ?? ""]);
   const searchPool = useMemo(
     () => need.trim().length < 2
       ? []
@@ -85,10 +88,10 @@ export default function FindProClient({
       || (trimmedNeed === initialNeed.trim() && trimmedPlace === initialPlace.trim())) return;
 
     const controller = new AbortController();
-    const key = JSON.stringify([trimmedNeed, trimmedPlace]);
+    const key = JSON.stringify([trimmedNeed, trimmedPlace, initialServiceGroupSlug ?? ""]);
     const timer = window.setTimeout(async () => {
       setSearchStatus({ key, status: "loading" });
-      const params = new URLSearchParams({ need: trimmedNeed, place: trimmedPlace });
+      const params = new URLSearchParams({ need: trimmedNeed, place: trimmedPlace, serviceGroup: initialServiceGroupSlug ?? "" });
       try {
         const response = await fetch(`/api/public/pro-search?${params}`, {
           signal: controller.signal,
@@ -113,7 +116,7 @@ export default function FindProClient({
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [need, place, initialNeed, initialPlace]);
+  }, [need, place, initialNeed, initialPlace, initialServiceGroupSlug]);
 
   /** Live updates refresh candidate listings but never add unrelated sellers. */
   const live = useRealtime<Record<string, unknown>>(
@@ -136,8 +139,8 @@ export default function FindProClient({
   const pool = useMemo(() => applyReviewRatings(rawPool, ratings), [rawPool, ratings]);
 
   const matches = useMemo(
-    () => (need.trim().length > 1 ? matchPros({ need, place }, pool) : []),
-    [need, place, pool],
+    () => (need.trim().length > 1 ? matchPros({ need, place, serviceGroupSlug: initialServiceGroupSlug }, pool) : []),
+    [need, place, pool, initialServiceGroupSlug],
   );
 
   /** Bark's core action: post the need straight to the matching sellers. */
@@ -165,6 +168,7 @@ export default function FindProClient({
       const res = await matchProRequest({
         need,
         place,
+        serviceGroupSlug: initialServiceGroupSlug,
         phone,
         name,
         consent: true,
@@ -244,6 +248,11 @@ export default function FindProClient({
             </label>
           </div>
           <PlaceSuggestions id="sa-find-pro-places" />
+          {selectedGroup && (
+            <p className="mt-3 inline-flex items-center gap-2 rounded-full bg-[#f3f9ec] px-3 py-1.5 text-xs font-bold text-[#3c6b1d]">
+              <KIcon name={selectedGroup.icon} size={14} /> Showing businesses in {selectedGroup.name}
+            </p>
+          )}
 
           {sent && (
             <p className="mt-3 rounded-2xl bg-[#e8f6d8] border border-[#3c6b1d]/20 px-4 py-3 text-sm font-bold text-[#3c6b1d] flex items-center gap-2">
@@ -260,7 +269,7 @@ export default function FindProClient({
             <p className="mt-3 text-xs text-[#1d3a5f]/60 flex items-center gap-1.5">
               <KIcon name="zap" size={13} className="text-[#7ac142] shrink-0" />
               {matches.length > 0
-                ? `${matches.length} pro${matches.length === 1 ? "" : "s"} matched — call any of them right now.`
+                ? `${matches.length} pro${matches.length === 1 ? "" : "s"} matched — compare profiles or request quotes through DevhulonConnect.`
                 : "No exact match yet — try a broader service."}
             </p>
           )}
@@ -270,7 +279,7 @@ export default function FindProClient({
           <section aria-live="polite">
             <h2 className="text-lg font-black text-[#10243e] mb-3 flex items-center gap-2">
               <KIcon name={iconForCategory(matches[0].categorySlug)} size={18} className="text-[#558c2b]" />
-              {matches[0].categoryName}
+              {selectedGroup ? `${selectedGroup.name} services` : matches[0].categoryName}
               {resolvedPlace?.area ? ` in ${resolvedPlace.area.name}` : resolvedPlace?.city ? ` near ${resolvedPlace.city.name}` : " near you"}
             </h2>
             <ul className="grid sm:grid-cols-2 gap-3 items-start">
@@ -378,8 +387,6 @@ export default function FindProClient({
 /** One matched seller: name, trust, why-you-matched, and the number that matters. */
 function ProCard({ match, rank }: { match: MatchedPro; rank: number }) {
   const b = match.business;
-  const tel = (b.phone ?? "").replace(/[^\d+]/g, "");
-  const wa = (b.whatsapp ?? "").replace(/[^\d]/g, "");
 
   return (
     <li
@@ -416,32 +423,14 @@ function ProCard({ match, rank }: { match: MatchedPro; rank: number }) {
         {b.priceNote ? ` · ${b.priceNote}` : ""}
       </p>
 
-      {/* Bark's core loop: the number, one tap, no form. */}
       <div className="flex gap-2 mt-auto pt-1">
-        {tel && (
-          <a
-            href={`tel:${tel}`}
-            className="btn-navy flex-1 text-center text-sm !py-2.5 inline-flex items-center justify-center gap-1.5"
-          >
-            <KIcon name="phone" size={15} /> Call
-          </a>
-        )}
-        {wa && (
-          <a
-            href={`https://wa.me/${wa}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex-1 text-center text-sm !py-2.5 rounded-full border-2 border-[#25D366] text-[#128C7E] font-extrabold inline-flex items-center justify-center gap-1.5 hover:bg-[#25D366]/10 transition-colors"
-          >
-            <KIcon name="message" size={15} /> WhatsApp
-          </a>
-        )}
         <Link
-          href={`/business/${b.id}`}
-          className="text-sm !py-2.5 px-4 rounded-full border-2 border-[#e7eef5] text-[#10243e] font-extrabold inline-flex items-center justify-center hover:border-[#10243e] transition-colors"
+          href={`/request-quote?business=${b.id}`}
+          className="btn-hippo flex-1 text-sm !py-2.5 inline-flex items-center justify-center"
         >
-          Profile
+          Request a quote
         </Link>
+        <Link href={`/business/${b.id}`} className="text-sm !py-2.5 px-4 rounded-full border-2 border-[#e7eef5] text-[#10243e] font-extrabold inline-flex items-center justify-center hover:border-[#10243e] transition-colors">Profile</Link>
       </div>
     </li>
   );

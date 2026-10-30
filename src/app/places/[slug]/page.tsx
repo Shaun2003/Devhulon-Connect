@@ -138,7 +138,7 @@ export default async function PlacePage({ params }: { params: Promise<{ slug: st
             rel="noreferrer"
             className="btn-navy text-sm mt-3 inline-flex"
           >
-            Open in Google Maps →
+            Open in Google Maps 
           </a>
         </div>
       </div>
