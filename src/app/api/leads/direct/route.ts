@@ -21,12 +21,8 @@ export async function POST(req: Request) {
   if (!db) return apiError("Server storage is not configured.", 503);
 
   const session = await sessionFromRequest(req);
-
-  // Posting a request is free and was never gated, so an anonymous buyer is
-  // fine here — the METERED resource is the seller's allowance, not the buyer's
-  // identity. A token that is present but invalid still fails above in
-  // sessionFromRequest, so a stale session can't sneak through as anonymous.
-  const requesterUid = session?.uid ?? null;
+  if (!session) return apiError("Sign in to request a quote so you can track the seller's reply.", 401);
+  const requesterUid = session.uid;
 
   // One lead, one seller — cheaper than a broadcast, so a looser cap. Still
   // capped: without this a buyer could sweep every listing in the database and
