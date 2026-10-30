@@ -148,6 +148,35 @@ if (idx) {
     else ok("no duplicate indexes", `${indexes.length} defined`);
     if (emptyFields) bad("every index has a collection and fields", `${emptyFields} index(es) are incomplete`);
   }
+  const renewalIndexExists = indexes.some((index) =>
+    index.collectionGroup === "subscriptions" &&
+    index.queryScope === "COLLECTION" &&
+    JSON.stringify(index.fields) === JSON.stringify([
+      { fieldPath: "auto_renew", order: "ASCENDING" },
+      { fieldPath: "next_renewal_at", order: "ASCENDING" },
+    ])
+  );
+  if (renewalIndexExists) ok("billing renewal query index exists");
+  else bad("billing renewal query index exists", "subscriptions require auto_renew + next_renewal_at ascending");
+}
+
+// ── scheduled billing jobs ────────────────────────────────────────────────────
+const vercel = checkJson("vercel.json", (j) => {
+  const crons = j.crons;
+  if (!Array.isArray(crons)) return "missing crons array";
+  const required = ["/api/cron/retention", "/api/cron/plan-credits", "/api/cron/billing-renewals"];
+  const paths = new Set(crons.map((cron) => cron.path));
+  const missing = required.filter((path) => !paths.has(path));
+  return missing.length ? `missing cron route(s): ${missing.join(", ")}` : null;
+});
+if (vercel) {
+  const renewal = vercel.crons.find((cron) => cron.path === "/api/cron/billing-renewals");
+  const credits = vercel.crons.find((cron) => cron.path === "/api/cron/plan-credits");
+  if (renewal && credits && renewal.schedule === "10 4 * * *" && credits.schedule === "23 4 * * *") {
+    ok("billing renewals run before plan-credit expiry processing");
+  } else {
+    bad("billing renewals run before plan-credit expiry processing", "expected renewal at 04:10 and plan credits at 04:23 UTC");
+  }
 }
 
 // ── rules files ───────────────────────────────────────────────────────────────
