@@ -99,10 +99,9 @@ export async function submitLead(input: LeadInput) {
     throw new Error("Please confirm you're happy for local businesses to contact you about this job.");
   }
   if (input.businessId) {
-    // `auth: optional` — posting a request to a business is free and must not
-    // require an account, exactly as before. The SELLER's allowance is the
-    // metered resource, not the buyer's identity.
-    const json = await apiPost("/api/leads/direct", { ...input }, { auth: "optional" });
+    // Buyers need an account so seller replies can be linked to their inbox and
+    // quote comparison history.
+    const json = await apiPost("/api/leads/direct", { ...input }, { auth: "required" });
     return { ok: true as const, id: String(json.id ?? "") };
   }
   // SERVER-SIDE, like every other lead door. This used to call `submitOpenLead`,
@@ -127,7 +126,8 @@ export async function submitLead(input: LeadInput) {
  *   2. writes ONE lead per matched seller, already addressed to them,
  *   3. drops a notification in each matched seller's inbox so they see it
  *      without admin involvement,
- *   4. returns the matched pros so the buyer gets direct numbers right away.
+ * 4. returns the matched count so the signed-in buyer can track replies and
+ *    compare offers from their account.
  *
  * The buyer's own copy of the request is written too, so the request appears in
  * their dashboard and the "posted to N pros" count is honest.
