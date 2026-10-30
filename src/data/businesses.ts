@@ -8,15 +8,13 @@
  */
 
 import { readVerification, type VerificationRecord } from "@/lib/verification";
+import { normalizePlanId } from "@/lib/plans";
 export type Business = {
   id: string;
   name: string;
   categorySlug: string;
   suburbSlug: string;
   citySlug: string;
-  phone: string;
-  whatsapp?: string;
-  address: string;
   hours: string;
   rating: number;
   reviewCount: number;
@@ -30,7 +28,7 @@ export type Business = {
    * rather than assume a record is present.
    */
   verification?: VerificationRecord | null;
-  plan?: "free" | "pro" | "premium" | "starter" | "professional" | "business";
+  plan?: "starter" | "premium";
   featured?: boolean;
   photos?: string[];
   /** Cover image used for the profile hero and social cards. */
@@ -134,24 +132,17 @@ export function applyReviewRatings<T extends { id: string; rating: number; revie
  * reader on the service pages and the realtime `onSnapshot` subscriptions —
  * so one listing can never be shaped two different ways depending on which
  * code path happened to produce it. The realtime feeds in particular hand raw
- * documents straight to components that read `b.services.slice(...)` and
- * `b.phone.replace(...)`, so every field has to be coerced here.
+ * documents straight to components that read `b.services.slice(...)`, so every
+ * public field has to be coerced here.
  */
 export function toBusiness(id: string, r: Record<string, unknown>): Business {
-  const rawPlan = String(r.plan ?? "free");
-  const plan: Business["plan"] =
-    rawPlan === "premium" || rawPlan === "business" ? "premium"
-      : rawPlan === "pro" || rawPlan === "professional" ? "pro"
-        : "free";
+  const plan = normalizePlanId(r.plan);
   return {
     id,
     name: String(r.name ?? "Local pro"),
     categorySlug: String(r.categorySlug ?? ""),
     suburbSlug: String(r.suburbSlug ?? ""),
     citySlug: String(r.citySlug ?? ""),
-    phone: String(r.phone ?? ""),
-    whatsapp: typeof r.whatsapp === "string" && r.whatsapp ? r.whatsapp : undefined,
-    address: String(r.address ?? ""),
     hours: String(r.hours ?? ""),
     rating: Number(r.rating ?? 0) || 0,
     reviewCount: Number(r.reviewCount ?? 0) || 0,

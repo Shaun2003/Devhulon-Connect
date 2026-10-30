@@ -1,6 +1,5 @@
 
 "use client";
-import { SITE_SHORT } from "@/lib/site";
 import { KIcon } from "@/lib/icons";
 import { useState, type FormEvent } from "react";
 import Link from "next/link";
@@ -18,7 +17,8 @@ import { usePlans } from "@/components/PlanConfigProvider";
 import { annualSaving, perMonthEquivalent, priceFor, type BillingPeriod } from "@/lib/plans";
 import { zaProvinces, zaCitiesForProvince, zaAreasForCity } from "@/data/za-locations";
 import { signupGroups } from "@/lib/matching";
-import { TrustBar } from "@/components/ui";
+import { PageHero, TrustBar } from "@/components/ui";
+import { OptionalMark, RequiredFieldsLegend, RequiredMark } from "@/components/forms/FormFields";
 
 /**
  * Navigate the whole tab to a hosted checkout URL.
@@ -32,8 +32,8 @@ function redirectTo(url: string) {
 }
 
 /**
- * Seller flow: sign in as seller → choose a plan (Starter 7-day trial /
- * Professional / Business) → pay on the provider's hosted checkout → list the
+ * Seller flow: sign in as seller → choose Starter or Premium → activate free
+ * Starter or pay on the provider's hosted checkout → list the
  * business, which goes live for buyers immediately.
  */
 export default function ListBusinessSeller() {
@@ -56,19 +56,36 @@ function SellerFlow() {
 
   if (!live) {
     return (
-      <div className="mx-auto w-full max-w-2xl animate-pulse space-y-4 px-4 py-10 sm:py-14" role="status" aria-label="Loading your plan">
-        <span className="sr-only">Loading your plan</span>
-        <div className="hippo-card space-y-3 p-5 sm:p-6">
-          <div className="h-5 w-1/3 rounded bg-[#d6e1ec]" />
-          <div className="h-3 w-full rounded bg-[#e7eef5]" />
-          <div className="h-3 w-5/6 rounded bg-[#e7eef5]" />
-          <div className="h-10 rounded-full bg-[#e7eef5]" />
+      <>
+        <ListingIntro planLabel="Checking your active plan…" />
+        <div className="mx-auto w-full max-w-2xl animate-pulse space-y-4 px-4 py-8 sm:px-6" role="status" aria-label="Loading your plan">
+          <span className="sr-only">Loading your plan</span>
+          <div className="hippo-card space-y-3 p-5 sm:p-6">
+            <div className="h-5 w-1/3 rounded bg-[#d6e1ec]" />
+            <div className="h-3 w-full rounded bg-[#e7eef5]" />
+            <div className="h-3 w-5/6 rounded bg-[#e7eef5]" />
+            <div className="h-10 rounded-full bg-[#e7eef5]" />
+          </div>
         </div>
-      </div>
+      </>
     );
   }
-  if (!plan) return <PlanChooser />;
-  return <ListingForm plan={plan} />;
+  return (
+    <>
+      <ListingIntro planLabel={plan ? `Active plan: ${plan}` : "Choose a plan to activate your listing."} />
+      {plan ? <ListingForm plan={plan} /> : <PlanChooser />}
+    </>
+  );
+}
+
+function ListingIntro({ planLabel }: { planLabel: string }) {
+  return (
+    <PageHero
+      kicker="List your business"
+      title="Go live in 2 minutes"
+      sub={`${planLabel} ${planLabel.startsWith("Active plan:") ? "·" : "—"} your listing appears for buyers instantly (realtime).`}
+    />
+  );
 }
 
 function PlanChooser() {
@@ -81,6 +98,7 @@ function PlanChooser() {
   const [err, setErr] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [period, setPeriod] = useState<BillingPeriod>("monthly");
+  const [autoRenew, setAutoRenew] = useState(false);
 
   async function go(p: PlanId) {
     if (!user) return;
@@ -89,13 +107,13 @@ function PlanChooser() {
     setNote(null);
     try {
       // Server-side checkout: returns a hosted payment URL, or starts the trial.
-      const res = await subscribeSeller(p, undefined, { period });
+      const res = await subscribeSeller(p, undefined, { period, autoRenew: p === "premium" && autoRenew });
       if (res.url) {
         redirectTo(res.url); // hand off to the provider's own page
         return;
       }
-      if (res.trial) setNote(res.message ?? "Your free trial has started.");
-      else if (!res.ok) setErr(res.message ?? "Could not start that plan.");
+      if (res.ok) setNote(res.message ?? "Your Starter plan is active.");
+      else setErr(res.message ?? "Could not start that plan.");
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Could not start that plan.");
     } finally { setBusy(null); }
@@ -103,13 +121,7 @@ function PlanChooser() {
 
   return (
     <div className="max-w-5xl mx-auto px-4 py-10 space-y-8">
-      <header className="hippo-hero min-w-0 rounded-3xl p-5 text-center text-white anim-rise sm:p-10">
-        <p className="text-xs font-extrabold uppercase tracking-[0.18em] text-[#ffc72c]">Grow your {SITE_SHORT} business</p>
-        <h2 className="mt-2 break-words text-2xl font-black tracking-tight sm:text-3xl">Choose your plan to start</h2>
-        <p className="mx-auto mt-3 max-w-2xl break-words text-sm text-white/75 sm:text-base">Start with a 7-day free trial on Starter. Upgrade any time as your workload grows.</p>
-      </header>
-
-      {note && <p className="text-sm font-bold text-[#3c6b1d] bg-[#e8f6d8] rounded-2xl px-4 py-3 text-center">{note} Choose a plan again after paying to continue.</p>}
+      {note && <p className="text-sm font-bold text-[#3c6b1d] bg-[#e8f6d8] rounded-2xl px-4 py-3 text-center">{note}</p>}
       {err && <p className="text-sm font-bold text-red-700 bg-red-50 rounded-2xl px-4 py-3 text-center">{err}</p>}
 
       <div className="flex items-center justify-center gap-2" role="group" aria-label="Billing period">
@@ -130,8 +142,12 @@ function PlanChooser() {
           Annual <span className="font-black text-[#7ac142]">save ~17%</span>
         </button>
       </div>
+      <label className="mx-auto flex max-w-xl items-start gap-2 text-xs text-[#1d3a5f]/75">
+        <input type="checkbox" checked={autoRenew} onChange={(event) => setAutoRenew(event.target.checked)} className="mt-0.5 accent-[#7ac142]" />
+        <span>Automatic Premium renewal <span className="font-medium text-[#1d3a5f]/55">(Optional)</span> — opt in through Paystack at the displayed period and price. You may cancel at any time and keep access through the paid period.</span>
+      </label>
 
-      <div className="grid sm:grid-cols-3 gap-3 items-stretch">
+      <div className="grid sm:grid-cols-2 gap-3 items-stretch">
         {plans.map((t) => (
           <div key={t.id} className={`hippo-card p-6 flex flex-col ${t.popular ? "border-2 !border-[#7ac142]" : ""}`}>
             {t.popular && <span className="self-start text-[10px] font-black uppercase tracking-widest bg-[#7ac142] text-[#0b1e33] rounded-full px-2 py-0.5 mb-2">Most popular</span>}
@@ -150,9 +166,8 @@ function PlanChooser() {
               {t.features.map((f) => <li key={f} className="flex gap-2"><span className="text-[#7ac142] font-black shrink-0"><KIcon name="check" size={14} className="inline shrink-0" /></span>{f}</li>)}
             </ul>
             <button disabled={busy !== null} onClick={() => go(t.id)} className={`mt-5 text-center text-sm font-extrabold rounded-full px-4 py-3 disabled:opacity-50 ${t.popular ? "btn-hippo" : "border-2 border-[#10243e] text-[#10243e] hover:bg-[#10243e] hover:text-white transition"}`}>
-              {busy === t.id ? "Starting…" : t.id === "starter" ? "Start 7-day free trial →" : `Subscribe — ${RANDS(priceFor(t, period))} →`}
+              {busy === t.id ? "Starting…" : t.id === "starter" ? "Choose Starter — free " : `Continue to checkout — ${RANDS(priceFor(t, period))} `}
             </button>
-            {t.id === "starter" && <p className="text-[10px] text-[#1d3a5f]/50 text-center mt-2">7 days free, then {RANDS(t.monthly)}/mo. Cancel anytime.</p>}
           </div>
         ))}
       </div>
@@ -169,9 +184,8 @@ function ListingForm({ plan }: { plan: Plan }) {
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState<string | null>(null);
-  // POPIA: a listing publishes the business's contact details to the public, which
-  // is a disclosure and needs explicit consent — not an implied one from pressing
-  // "Create listing". The server refuses without it.
+  // Contact information is collected separately from the public profile.
+  // Consent remains explicit because the details are personal information.
   const [consent, setConsent] = useState(false);
   const [consentErr, setConsentErr] = useState<string | null>(null);
 
@@ -186,7 +200,17 @@ function ListingForm({ plan }: { plan: Plan }) {
     setConsentErr(null);
     if (!consent) {
       setBusy(false);
-      setConsentErr("Tick the box so we may publish your business contact details on this listing.");
+      setConsentErr("Confirm that we may store your business contact details for marketplace enquiries.");
+      return;
+    }
+    const invalidField = Array.from(formEl.querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>("input, textarea, select"))
+      .find((field) => !field.disabled && !field.validity.valid);
+    if (invalidField) {
+      invalidField.setAttribute("aria-invalid", "true");
+      invalidField.setAttribute("aria-describedby", "listing-form-error");
+      setBusy(false);
+      setErr(`${invalidField.labels?.[0]?.innerText.replace("*", "").trim() ?? "This field"}: ${invalidField.validationMessage || "Check this field."}`);
+      invalidField.focus();
       return;
     }
     const fd = new FormData(formEl);
@@ -231,7 +255,7 @@ function ListingForm({ plan }: { plan: Plan }) {
         <h2 className="text-3xl font-black text-[#10243e]">You&apos;re LIVE!</h2>
         <p className="text-sm text-[#1d3a5f]/70">Your business is now in front of buyers in real time. Verification is checked by our team within 24h.</p>
         <div className="flex gap-2 justify-center">
-          <Link href="/dashboard" className="btn-hippo text-sm">Go to dashboard →</Link>
+          <Link href="/dashboard" className="btn-hippo text-sm">Go to dashboard </Link>
         </div>
       </div>
     );
@@ -242,18 +266,24 @@ function ListingForm({ plan }: { plan: Plan }) {
   const proLock = !can("photos");
 
   return (
-    <div className="max-w-2xl mx-auto px-4 py-8 space-y-6">
-      <header className="hippo-hero min-w-0 rounded-3xl p-5 text-center text-white anim-rise sm:p-8">
-        <p className="text-xs font-extrabold uppercase tracking-[0.18em] text-[#ffc72c]">List your business</p>
-        <h2 className="mt-2 break-words text-2xl font-black tracking-tight sm:text-3xl">Go live in 2 minutes</h2>
-        <p className="mt-2 break-words text-sm text-white/75">Active plan: <b className="uppercase">{plan}</b> · your listing appears for buyers instantly (realtime).</p>
-      </header>
+    <div className="mx-auto w-full max-w-6xl px-4 py-10 space-y-8 sm:px-6">
+      <ListingFields
+        province={province} setProvince={setProvince}
+        city={city} setCity={setCity}
+        suburb={suburb} setSuburb={setSuburb}
+        groupSlug={groupSlug} setGroupSlug={setGroupSlug}
+        category={category} setCategory={setCategory}
+        busy={busy} err={err} onSubmit={onSubmit} can={can}
+        onValidationError={setErr}
+        consent={consent} setConsent={(value) => { setConsent(value); if (value) setConsentErr(null); }} consentErr={consentErr}
+        onConsentInvalid={() => setConsentErr("Consent is required before we can store your business contact details.")}
+      />
 
       {/* What this plan unlocks */}
       <div className={`hippo-card p-5 ${proLock ? "border-2 !border-[#ffc72c]" : ""}`}>
         <div className="flex items-center justify-between gap-3">
           <h2 className="font-black text-[#10243e]">What your {plan.toUpperCase()} plan unlocks</h2>
-          <Link href="/advertise" className="text-xs font-bold text-[#558c2b] hover:underline">Compare plans →</Link>
+          <Link href="/pricing" className="text-xs font-bold text-[#558c2b] hover:underline">Compare plans </Link>
         </div>
         <ul className="mt-3 grid sm:grid-cols-2 gap-x-4 gap-y-1.5 text-sm">
           {(Object.keys(CAP_LABEL) as Capability[]).map((cap) => {
@@ -267,18 +297,8 @@ function ListingForm({ plan }: { plan: Plan }) {
             );
           })}
         </ul>
-        {proLock && <p className="text-xs font-bold text-[#a36508] bg-[#fff4d6] rounded-xl px-3 py-2 mt-3"><KIcon name="sparkles" size={14} className="inline shrink-0" /> Photos, WhatsApp button and priority placement need <b>PRO (R199/mo)</b>. Upgrade below or publish FREE now.</p>}
+        {proLock && <p className="text-xs font-bold text-[#a36508] bg-[#fff4d6] rounded-xl px-3 py-2 mt-3"><KIcon name="sparkles" size={14} className="inline shrink-0" /> Upgrade to Premium for advanced profile tools and priority placement.</p>}
       </div>
-
-      <ListingFields
-        province={province} setProvince={setProvince}
-        city={city} setCity={setCity}
-        suburb={suburb} setSuburb={setSuburb}
-        groupSlug={groupSlug} setGroupSlug={setGroupSlug}
-        category={category} setCategory={setCategory}
-        busy={busy} err={err} onSubmit={onSubmit} can={can}
-        consent={consent} setConsent={setConsent} consentErr={consentErr}
-      />
       <TrustBar />
     </div>
   );
@@ -286,7 +306,7 @@ function ListingForm({ plan }: { plan: Plan }) {
 function ListingFields({
   province, setProvince, city, setCity, suburb, setSuburb,
   groupSlug, setGroupSlug, category, setCategory,
-  busy, err, onSubmit, can, consent, setConsent, consentErr,
+  busy, err, onSubmit, can, onValidationError, consent, setConsent, consentErr, onConsentInvalid,
 }: {
   province: string; setProvince: (v: string) => void;
   city: string; setCity: (v: string) => void;
@@ -296,23 +316,46 @@ function ListingFields({
   busy: boolean;
   err: string | null;
   onSubmit: (e: FormEvent<HTMLFormElement>) => void;
+  onValidationError: (message: string | null) => void;
   can: (cap: Capability) => boolean;
   consent: boolean;
   setConsent: (v: boolean) => void;
   consentErr: string | null;
+  onConsentInvalid: () => void;
 }) {
   return (
-    <form onSubmit={onSubmit} className="hippo-card p-5 sm:p-8 space-y-6 !rounded-3xl border border-[#e7eef5] shadow-sm">
+    <form
+      onSubmit={onSubmit}
+      noValidate
+      onInvalidCapture={(event) => {
+        const field = event.target;
+        if (field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement || field instanceof HTMLSelectElement) {
+          field.setAttribute("aria-invalid", "true");
+          field.setAttribute("aria-describedby", "listing-form-error");
+          onValidationError(`${field.labels?.[0]?.innerText.replace("*", "").trim() ?? "This field"}: ${field.validationMessage}`);
+        }
+      }}
+      onInputCapture={(event) => {
+        const field = event.target;
+        if ((field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement || field instanceof HTMLSelectElement) && field.validity.valid) {
+          field.removeAttribute("aria-invalid");
+          field.removeAttribute("aria-describedby");
+          onValidationError(null);
+        }
+      }}
+      className="hippo-card p-5 sm:p-8 space-y-6 !rounded-3xl border border-[#e7eef5] shadow-sm"
+    >
+      <RequiredFieldsLegend />
       <div>
         <h3 className="text-xl font-black text-[#10243e] mb-4 border-b border-[#e7eef5] pb-2">Business Details</h3>
         <div className="space-y-4">
           <label className="block text-sm font-bold text-[#10243e]">
-            Business Name
-            <input required name="name" placeholder="e.g. Acme Plumbing Solutions" className="mt-1 w-full rounded-xl border-2 border-[#e7eef5] focus:border-[#7ac142] px-4 py-3 text-sm font-normal bg-[#f2f6fa]/40 outline-none transition-colors" />
+            Business Name <RequiredMark />
+            <input required minLength={2} name="name" autoComplete="organization" placeholder="e.g. Acme Plumbing Solutions" className="mt-1 w-full rounded-xl border-2 border-[#e7eef5] focus:border-[#7ac142] px-4 py-3 text-sm font-normal bg-[#f2f6fa]/40 outline-none transition-colors" />
           </label>
           <div className="grid sm:grid-cols-2 gap-4">
             <label className="block text-sm font-bold text-[#10243e]">
-              What kind of business is it?
+              What kind of business is it? <RequiredMark />
               <select
                 required
                 value={groupSlug}
@@ -326,7 +369,7 @@ function ListingFields({
               </select>
             </label>
             <label className="block text-sm font-bold text-[#10243e]">
-              {groupSlug ? "Your specific service" : "Specific service"}
+              {groupSlug ? "Your specific service" : "Specific service"} <RequiredMark />
               <select
                 required
                 name="category"
@@ -344,12 +387,12 @@ function ListingFields({
           </div>
           <div className="grid sm:grid-cols-2 gap-4">
             <label className="block text-sm font-bold text-[#10243e]">
-              Registration Number (Optional)
+              Registration Number <OptionalMark />
               <input name="registrationNumber" placeholder="K2020 / XXXXXX / XX" className="mt-1 w-full rounded-xl border-2 border-[#e7eef5] focus:border-[#7ac142] px-4 py-3 text-sm font-normal bg-[#f2f6fa]/40 outline-none transition-colors" />
             </label>
             <label className="block text-sm font-bold text-[#10243e]">
-              What do you do? (Description)
-              <textarea required name="desc" rows={2} placeholder="Explain what makes your service stand out..." className="mt-1 w-full rounded-xl border-2 border-[#e7eef5] focus:border-[#7ac142] px-4 py-3 text-sm font-normal bg-[#f2f6fa]/40 outline-none transition-colors" />
+              What do you do? (Description) <RequiredMark />
+              <textarea required minLength={2} name="desc" rows={2} placeholder="Explain what makes your service stand out..." className="mt-1 w-full rounded-xl border-2 border-[#e7eef5] focus:border-[#7ac142] px-4 py-3 text-sm font-normal bg-[#f2f6fa]/40 outline-none transition-colors" />
             </label>
           </div>
         </div>
@@ -360,17 +403,17 @@ function ListingFields({
         <div className="space-y-4">
           <div className="grid sm:grid-cols-2 gap-4">
             <label className="block text-sm font-bold text-[#10243e]">
-              Phone Number
-              <input required name="phone" inputMode="tel" placeholder="012 546 1234" className="mt-1 w-full rounded-xl border-2 border-[#e7eef5] focus:border-[#7ac142] px-4 py-3 text-sm font-normal bg-[#f2f6fa]/40 outline-none transition-colors" />
+              Business phone (private) <RequiredMark />
+              <input required minLength={6} name="phone" type="tel" autoComplete="tel" inputMode="tel" placeholder="012 546 1234" className="mt-1 w-full rounded-xl border-2 border-[#e7eef5] focus:border-[#7ac142] px-4 py-3 text-sm font-normal bg-[#f2f6fa]/40 outline-none transition-colors" />
             </label>
             <label className="block text-sm font-bold text-[#10243e]">
-              Email Address
-              <input required name="email" type="email" placeholder="hello@yourbusiness.co.za" className="mt-1 w-full rounded-xl border-2 border-[#e7eef5] focus:border-[#7ac142] px-4 py-3 text-sm font-normal bg-[#f2f6fa]/40 outline-none transition-colors" />
+              Business email (private) <RequiredMark />
+              <input required name="email" type="email" autoComplete="email" placeholder="hello@yourbusiness.co.za" className="mt-1 w-full rounded-xl border-2 border-[#e7eef5] focus:border-[#7ac142] px-4 py-3 text-sm font-normal bg-[#f2f6fa]/40 outline-none transition-colors" />
             </label>
           </div>
           <div className="grid sm:grid-cols-2 gap-4">
             <label className="block text-sm font-bold text-[#10243e]">
-              Province
+              Province <RequiredMark />
               <select
                 required
                 value={province}
@@ -384,7 +427,7 @@ function ListingFields({
               </select>
             </label>
             <label className="block text-sm font-bold text-[#10243e]">
-              City / Town
+              City / Town <RequiredMark />
               <select
                 required
                 value={city}
@@ -401,7 +444,7 @@ function ListingFields({
           </div>
           <div className="grid sm:grid-cols-2 gap-4">
             <label className="block text-sm font-bold text-[#10243e]">
-              Suburb / Area
+              Suburb / Area <RequiredMark />
               <select
                 required
                 name="suburb"
@@ -417,12 +460,12 @@ function ListingFields({
               </select>
             </label>
             <label className="block text-sm font-bold text-[#10243e]">
-              Year Established (Optional)
+              Year Established <OptionalMark />
               <input name="yearEstablished" type="number" min="1900" max="2100" placeholder="e.g. 2012" className="mt-1 w-full rounded-xl border-2 border-[#e7eef5] focus:border-[#7ac142] px-4 py-3 text-sm font-normal bg-[#f2f6fa]/40 outline-none transition-colors" />
             </label>
           </div>
           <label className="block text-sm font-bold text-[#10243e]">
-            Physical Address (Optional)
+            Business address (private) <OptionalMark />
             <input name="address" placeholder="582 Gerrit Maritz St" className="mt-1 w-full rounded-xl border-2 border-[#e7eef5] focus:border-[#7ac142] px-4 py-3 text-sm font-normal bg-[#f2f6fa]/40 outline-none transition-colors" />
           </label>
         </div>
@@ -432,30 +475,29 @@ function ListingFields({
         <div className="space-y-4">
           <div className="grid sm:grid-cols-2 gap-4">
             <label className="block text-sm font-bold text-[#10243e]">
-              Business Hours
+              Business Hours <OptionalMark />
               <input name="hours" placeholder="Mon–Sat 07:00–18:00" className="mt-1 w-full rounded-xl border-2 border-[#e7eef5] focus:border-[#7ac142] px-4 py-3 text-sm font-normal bg-[#f2f6fa]/40 outline-none transition-colors" />
             </label>
             <label className="block text-sm font-bold text-[#10243e]">
-              Price / Rate Guide
+              Price / Rate Guide <OptionalMark />
               <input name="priceNote" placeholder="Callout R550 / Hourly R650" className="mt-1 w-full rounded-xl border-2 border-[#e7eef5] focus:border-[#7ac142] px-4 py-3 text-sm font-normal bg-[#f2f6fa]/40 outline-none transition-colors" />
             </label>
           </div>
           <label className="block text-sm font-bold text-[#10243e]">
-            Keywords / Specialties (comma separated)
+            Keywords / Specialties (comma separated) <OptionalMark />
             <input name="services" placeholder="Leak detection, Geyser installs, Blocked drains" className="mt-1 w-full rounded-xl border-2 border-[#e7eef5] focus:border-[#7ac142] px-4 py-3 text-sm font-normal bg-[#f2f6fa]/40 outline-none transition-colors" />
           </label>
         </div>
       </div>
       <div>
-        <h3 className="text-xl font-black text-[#10243e] mb-1">Pro Features</h3>
+        <h3 className="text-xl font-black text-[#10243e] mb-1">Profile and private contact options</h3>
         <p className="text-xs text-[#1d3a5f]/60 mb-4">
-          These unlock as you upgrade. Fill in what you have now — you can add the rest later from your
-          dashboard without re-listing.
+          Phone, email, WhatsApp, website and address details are stored privately and are not displayed on your public listing.
         </p>
         <div className="space-y-4">
           <div className="grid sm:grid-cols-2 gap-4">
             <label className="block text-sm font-bold text-[#10243e]">
-              Cover photo link{" "}
+              Cover photo link <OptionalMark />{" "}
               <span className="font-normal text-[#1d3a5f]/60">
                 {can("photos") ? "(optional, free)" : "\u2014 PRO feature "}
               </span>
@@ -467,59 +509,57 @@ function ListingFields({
               />
             </label>
             <label className="block text-sm font-bold text-[#10243e]">
-              WhatsApp number{" "}
+              WhatsApp number <OptionalMark />{" "}
               <span className="font-normal text-[#1d3a5f]/60">
-                {can("whatsapp") ? "(buyers get a one-tap button)" : "\u2014 PRO feature "}
+                {can("whatsapp") ? "(private)" : "\u2014 Premium option "}
               </span>
               <input
                 name="whatsapp"
                 inputMode="tel"
                 disabled={!can("whatsapp")}
-                placeholder={can("whatsapp") ? "27821234567 (international format)" : "Upgrade to PRO for a WhatsApp button"}
+                placeholder={can("whatsapp") ? "27821234567 (private; not shown publicly)" : "Premium contact options"}
                 className="mt-1 w-full rounded-xl border-2 border-[#e7eef5] focus:border-[#7ac142] px-4 py-3 text-sm font-normal bg-[#f2f6fa]/40 outline-none disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               />
             </label>
           </div>
 
-          {/* Business plan only. These used to be written by updateBusiness() but
-              were never asked for at signup, so a seller had to publish first and
-              then hunt for them. */}
+          {/* Premium-only social links are private settings, never listing fields. */}
           <div className="grid sm:grid-cols-2 gap-4">
             <label className="block text-sm font-bold text-[#10243e]">
-              Website{" "}
+              Website <OptionalMark />{" "}
               <span className="font-normal text-[#1d3a5f]/60">
-                {can("website") ? "(optional)" : "— Business plan "}
+                {can("website") ? "(private, optional)" : "— Premium option "}
               </span>
               <input
                 name="website"
                 type="url"
                 disabled={!can("website")}
-                placeholder={can("website") ? "https://yourbusiness.co.za" : "Upgrade to Business to add a website"}
+                placeholder={can("website") ? "https://yourbusiness.co.za" : "Premium contact options"}
                 className="mt-1 w-full rounded-xl border-2 border-[#e7eef5] focus:border-[#7ac142] px-4 py-3 text-sm font-normal bg-[#f2f6fa]/40 outline-none disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               />
             </label>
             <label className="block text-sm font-bold text-[#10243e]">
-              Facebook page{" "}
+              Facebook page <OptionalMark />{" "}
               <span className="font-normal text-[#1d3a5f]/60">
-                {can("socials") ? "(optional)" : "— Business plan "}
+                {can("socials") ? "(private, optional)" : "— Premium option "}
               </span>
               <input
                 name="facebook"
                 disabled={!can("socials")}
-                placeholder={can("socials") ? "https://facebook.com/yourpage" : "Upgrade to Business to add socials"}
+                placeholder={can("socials") ? "https://facebook.com/yourpage" : "Premium social links"}
                 className="mt-1 w-full rounded-xl border-2 border-[#e7eef5] focus:border-[#7ac142] px-4 py-3 text-sm font-normal bg-[#f2f6fa]/40 outline-none disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               />
             </label>
           </div>
           <label className="block text-sm font-bold text-[#10243e]">
-            Instagram{" "}
+            Instagram <OptionalMark />{" "}
             <span className="font-normal text-[#1d3a5f]/60">
-              {can("socials") ? "(optional)" : "— Business plan "}
+              {can("socials") ? "(private, optional)" : "— Premium option "}
             </span>
             <input
               name="instagram"
               disabled={!can("socials")}
-              placeholder={can("socials") ? "https://instagram.com/yourpage" : "Upgrade to Business to add socials"}
+              placeholder={can("socials") ? "https://instagram.com/yourpage" : "Premium social links"}
               className="mt-1 w-full rounded-xl border-2 border-[#e7eef5] focus:border-[#7ac142] px-4 py-3 text-sm font-normal bg-[#f2f6fa]/40 outline-none disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             />
           </label>
@@ -531,9 +571,10 @@ function ListingFields({
         label={LISTING_CONSENT_LABEL}
         detail={LISTING_CONSENT_DETAIL}
         error={consentErr}
+        onInvalid={onConsentInvalid}
       />
-      <button disabled={busy || !consent} className="bg-[#7ac142] hover:bg-[#68a834] text-white font-black w-full !rounded-xl !py-4 text-base disabled:opacity-60 transition shadow-md">{busy ? "Publishing…" : "Publish listing — go live →"}</button>
-      {err && <p className="text-sm font-bold text-red-700 bg-red-50 rounded-2xl px-4 py-3">{err}</p>}
+      <button disabled={busy} className="bg-[#7ac142] hover:bg-[#68a834] text-white font-black w-full !rounded-xl !py-4 text-base disabled:opacity-60 transition shadow-md">{busy ? "Publishing…" : "Publish listing — go live "}</button>
+      {err && <p id="listing-form-error" role="alert" className="text-sm font-bold text-red-700 bg-red-50 rounded-2xl px-4 py-3">{err}</p>}
     </form>
   );
 }

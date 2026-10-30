@@ -1,4 +1,5 @@
 "use client";
+/* eslint-disable @next/next/no-img-element -- post images use seller-supplied public URLs. */
 import { useEffect } from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
@@ -51,6 +52,7 @@ export default function PostPreviewModal({
   const title = String(post.title ?? "");
   const id = String(post.id ?? "");
   const bodyText = String(kind === "guide" ? post.body ?? "" : post.detail ?? "");
+  const imageUrl = kind === "place" ? String(post.imageUrl ?? "") : "";
   const pending = String(post.status ?? "live") === "pending";
   const featured = Boolean(post.featured);
 
@@ -73,6 +75,7 @@ export default function PostPreviewModal({
             ? [
             ...(post.business ? [{ icon: "building" as IconKey, text: String(post.business) }] : []),
             ...(post.suburb ? [{ icon: "mapPin" as IconKey, text: String(post.suburb) }] : []),
+            ...(post.validUntil ? [{ icon: "clock" as IconKey, text: `Valid until ${String(post.validUntil)}` }] : []),
               ]
             : kind === "place"
               ? [
@@ -100,9 +103,12 @@ export default function PostPreviewModal({
       />
       <div className="relative z-10 max-h-[90dvh] w-full overflow-y-auto rounded-3xl bg-white shadow-2xl sm:max-w-lg anim-rise">
         <div className="relative h-40 sm:h-48 overflow-hidden bg-gradient-to-br from-[#10243e] via-[#1d3a5f] to-[#558c2b]">
-          <div aria-hidden="true" className="absolute inset-0 grid place-items-center text-white/15">
-            <KIcon name={meta.icon} size={112} strokeWidth={1.1} />
-          </div>
+          {imageUrl && <img src={imageUrl} alt={`${title} photo`} className="absolute inset-0 h-full w-full object-cover" />}
+          {!imageUrl && (
+            <div aria-hidden="true" className="absolute inset-0 grid place-items-center text-white/15">
+              <KIcon name={meta.icon} size={112} strokeWidth={1.1} />
+            </div>
+          )}
           <button
             onClick={onClose}
             className="absolute top-3 right-3 w-9 h-9 grid place-items-center rounded-full bg-white/90 text-[#10243e] hover:bg-white transition font-black"
@@ -158,7 +164,7 @@ export default function PostPreviewModal({
               onClick={onClose}
               className="ml-auto btn-hippo text-xs"
             >
-              More {meta.label.toLowerCase()}s →
+              More {meta.label.toLowerCase()}s 
             </Link>
           </div>
         </div>

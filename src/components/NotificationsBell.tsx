@@ -64,7 +64,7 @@ export default function NotificationsBell() {
             <div className="mb-2 flex items-center justify-between gap-2">
               <p id="notification-panel-title" className="text-sm font-black text-[#10243e]">Notifications {nots.live && <span className="chip-live ml-1">Live</span>}</p>
               <Link href="/notifications" onClick={() => setOpen(false)} className="shrink-0 text-[11px] font-bold text-[#558c2b] hover:underline">
-                See all →
+                See all 
               </Link>
             </div>
             {nots.rows.length === 0 && (

@@ -195,7 +195,7 @@ export default function ServiceSearch({
             : "You can try a nearby service area, request a quote, or invite a local business to list."}
         </p>
         <div className="flex flex-wrap justify-center gap-2 mt-5">
-          <Link href="/request-quote" className="btn-hippo text-sm">Request a free quote →</Link>
+          <Link href="/request-quote" className="btn-hippo text-sm">Request a free quote </Link>
           <Link href="/list-business" className="btn-navy text-sm">List your business</Link>
         </div>
         {error && <ListenerError error={error} />}

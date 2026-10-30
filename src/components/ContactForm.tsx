@@ -62,7 +62,7 @@ export default function ContactForm() {
         />
       </label>
       <button type="submit" disabled={!ready} className="btn-hippo text-sm disabled:opacity-50">
-        Open in my email app →
+        Open in my email app 
       </button>
       <p className="text-xs text-[#1d3a5f]/60">
         This opens your email app with everything pre-filled — we never see your keystrokes.

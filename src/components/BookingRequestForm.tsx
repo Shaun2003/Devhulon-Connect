@@ -5,6 +5,7 @@ import { BOOKING_LIMITS, bookingToday, validateBooking } from "@/lib/bookings";
 import { KIcon } from "@/lib/icons";
 import { SignInInline } from "@/components/dash/parts";
 import { useAuth } from "@/components/AuthProvider";
+import { FieldLabel, RequiredFieldsLegend } from "@/components/forms/FormFields";
 
 const inputCls =
   "mt-1 w-full rounded-2xl border-2 border-[#e7eef5] focus:border-[#7ac142] px-4 py-2.5 text-sm font-normal bg-[#f2f6fa]/40 outline-none";
@@ -44,15 +45,30 @@ export default function BookingRequestForm({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
 
   if (!sellerUid) return null; // nothing to book against
 
   async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const issues = validateBooking({ date, time, durationHours, note });
-    if (issues.length > 0) { setError(issues[0]); return; }
+    if (issues.length > 0) {
+      const nextErrors: Record<string, string> = {};
+      if (!date) nextErrors.date = "Choose a booking date.";
+      else if (date < bookingToday()) nextErrors.date = "That date is in the past.";
+      if (!time) nextErrors.time = "Choose a start time.";
+      const duration = Number(durationHours);
+      if (!Number.isFinite(duration) || duration < BOOKING_LIMITS.minHours || duration > BOOKING_LIMITS.maxHours) {
+        nextErrors.duration = `Choose a duration between ${BOOKING_LIMITS.minHours} and ${BOOKING_LIMITS.maxHours} hours.`;
+      }
+      if (note.trim().length > BOOKING_LIMITS.note) nextErrors.note = `Keep the note under ${BOOKING_LIMITS.note} characters.`;
+      setFieldErrors(nextErrors);
+      setError(issues[0]);
+      return;
+    }
     setBusy(true);
     setError(null);
+    setFieldErrors({});
     try {
       await createBooking({
         businessId,
@@ -93,7 +109,7 @@ export default function BookingRequestForm({
         <h2 className="font-black text-[#10243e]">Book {businessName}</h2>
         {!open && !done && (
           <button onClick={() => { setOpen(true); setError(null); }} className="ml-auto btn-hippo text-sm">
-            Request a booking →
+            Request a booking 
           </button>
         )}
       </div>
@@ -106,39 +122,51 @@ export default function BookingRequestForm({
       {error && !open && <p className="mt-2 text-sm font-bold text-red-700 bg-red-50 rounded-2xl px-4 py-3">{error}</p>}
 
       {open ? (
-        <form onSubmit={submit} className="mt-3 space-y-3">
+        <form
+          onSubmit={submit}
+          noValidate
+          onInvalidCapture={(event) => {
+            const field = event.target;
+            if (field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement || field instanceof HTMLSelectElement) {
+              const key = field.name;
+              if (key) setFieldErrors((current) => ({ ...current, [key]: field.validationMessage }));
+            }
+          }}
+          className="mt-3 space-y-3"
+        >
+          <RequiredFieldsLegend />
           <div className="grid sm:grid-cols-3 gap-3">
-            <label className="block text-sm font-bold text-[#10243e]">
-              Date *
-              <input type="date" required min={bookingToday()} value={date} onChange={(e) => setDate(e.target.value)} className={inputCls} />
-            </label>
-            <label className="block text-sm font-bold text-[#10243e]">
-              Start time *
-              <input type="time" required value={time} onChange={(e) => setTime(e.target.value)} className={inputCls} />
-            </label>
-            <label className="block text-sm font-bold text-[#10243e]">
-              How long? *
-              <select value={durationHours} onChange={(e) => setDurationHours(e.target.value)} className={inputCls}>
+            <FieldLabel label="Date" required error={fieldErrors.date}>
+              <input name="date" type="date" required min={bookingToday()} value={date} aria-invalid={Boolean(fieldErrors.date)} aria-describedby={fieldErrors.date ? "field-error-date" : undefined} onChange={(e) => { setDate(e.target.value); setFieldErrors((current) => ({ ...current, date: "" })); }} className={inputCls} />
+            </FieldLabel>
+            <FieldLabel label="Start time" required error={fieldErrors.time}>
+              <input name="time" type="time" required value={time} aria-invalid={Boolean(fieldErrors.time)} aria-describedby={fieldErrors.time ? "field-error-start-time" : undefined} onChange={(e) => { setTime(e.target.value); setFieldErrors((current) => ({ ...current, time: "" })); }} className={inputCls} />
+            </FieldLabel>
+            <FieldLabel label="How long?" required error={fieldErrors.duration}>
+              <select name="duration" required value={durationHours} aria-invalid={Boolean(fieldErrors.duration)} aria-describedby={fieldErrors.duration ? "field-error-how-long" : undefined} onChange={(e) => { setDurationHours(e.target.value); setFieldErrors((current) => ({ ...current, duration: "" })); }} className={inputCls}>
                 {DURATIONS.map((d) => <option key={d.v} value={d.v}>{d.label}</option>)}
               </select>
-            </label>
+            </FieldLabel>
           </div>
-          <label className="block text-sm font-bold text-[#10243e]">
-            What do you need done?
+          <FieldLabel label="What do you need done?" error={fieldErrors.note}>
             <textarea
+              name="note"
               rows={2}
               value={note}
-              onChange={(e) => setNote(e.target.value.slice(0, BOOKING_LIMITS.note))}
+              maxLength={BOOKING_LIMITS.note}
+              aria-invalid={Boolean(fieldErrors.note)}
+              aria-describedby={fieldErrors.note ? "field-error-what-do-you-need-done" : undefined}
+              onChange={(e) => { setNote(e.target.value.slice(0, BOOKING_LIMITS.note)); setFieldErrors((current) => ({ ...current, note: "" })); }}
               placeholder="e.g. Kitchen tap replacement — parts on hand."
               className={inputCls}
             />
-          </label>
+          </FieldLabel>
           {hours && hours.toLowerCase() !== "call for hours" && (
             <p className="text-[11px] text-[#1d3a5f]/60">Their hours: {hours} — they can still accept outside these.</p>
           )}
           <div className="flex flex-wrap items-center gap-2">
             <button disabled={busy} className="btn-hippo text-sm disabled:opacity-60">
-              {busy ? "Sending…" : "Request booking →"}
+              {busy ? "Sending…" : "Request booking "}
             </button>
             <button type="button" onClick={() => { setOpen(false); setError(null); }} className="text-sm font-bold text-[#1d3a5f]/70 hover:underline">
               Cancel

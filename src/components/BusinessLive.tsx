@@ -16,7 +16,7 @@ import { useAuth } from "@/components/AuthProvider";
 import { hasCap, type Plan } from "@/lib/monetize";
 import { normalizePlanId } from "@/lib/plans";
 import { getCategory } from "@/data/categories";
-import { waLink } from "@/lib/utils";
+import { getSuburb } from "@/data/locations";
 import { RatingSummary, AdSlot } from "@/components/ui";
 import { KIcon, iconForCategory } from "@/lib/icons";
 import { SITE_SHORT } from "@/lib/site";
@@ -53,7 +53,7 @@ function ClaimCard({ businessId, businessName }: { businessId: string; businessN
       <h2 className="font-black text-[#10243e]">Own {businessName}?</h2>
       <p className="text-sm text-[#1d3a5f]/70 mt-1">Claim this listing to edit your info, add photos and get leads. We verify ownership by phone.</p>
       {!open && !msg && (
-        <button onClick={() => setOpen(true)} className="btn-navy text-sm mt-3"><KIcon name="building" size={14} className="inline shrink-0" /> Claim this business →</button>
+        <button onClick={() => setOpen(true)} className="btn-navy text-sm mt-3"><KIcon name="building" size={14} className="inline shrink-0" /> Claim this business </button>
       )}
       {open && !user && (
         <div className="mt-3 rounded-2xl bg-[#f2f6fa] p-4 text-sm">
@@ -65,7 +65,7 @@ function ClaimCard({ businessId, businessName }: { businessId: string; businessN
         <form onSubmit={onSubmit} className="mt-3 grid sm:grid-cols-2 gap-2">
           <input required value={name} onChange={(e) => setName(e.target.value)} placeholder="Your name" className="rounded-xl border-2 border-[#e7eef5] focus:border-[#7ac142] px-3 py-2.5 text-sm outline-none" />
           <input required value={phone} onChange={(e) => setPhone(e.target.value)} inputMode="tel" placeholder="Phone for verification" className="rounded-xl border-2 border-[#e7eef5] focus:border-[#7ac142] px-3 py-2.5 text-sm outline-none" />
-          <button disabled={busy} className="btn-hippo text-sm sm:col-span-2 disabled:opacity-60">{busy ? "Submitting…" : "Submit claim →"}</button>
+          <button disabled={busy} className="btn-hippo text-sm sm:col-span-2 disabled:opacity-60">{busy ? "Submitting…" : "Submit claim "}</button>
           <p className="text-[11px] text-[#1d3a5f]/50 sm:col-span-2">{user ? "Signed in — your claim links to your account." : "You'll be asked to sign in after submitting if you aren't yet."}</p>
         </form>
       )}
@@ -106,7 +106,7 @@ function ReportForm({ targetId, label }: { targetId: string; label: string }) {
 
 export type Biz = {
   id: string; name?: string; categorySlug?: string; suburbSlug?: string; citySlug?: string;
-  phone?: string; whatsapp?: string; address?: string; hours?: string; rating?: number;
+  hours?: string; rating?: number;
   reviewCount?: number; services?: string[]; description?: string; priceNote?: string;
   verified?: boolean; plan?: string; photos?: string[]; coverImageUrl?: string;
   /** Provenance behind the badge; absent on listings verified before records existed. */
@@ -130,7 +130,9 @@ export default function BusinessLive({
   return (
     <>
       <BusinessBody id={id} initial={initial} initialReviews={initialReviews} />
-      <CtaBand />
+      <div className="mx-auto w-full max-w-6xl px-4 pb-10 sm:px-6 lg:px-8">
+        <CtaBand />
+      </div>
     </>
   );
 }
@@ -206,7 +208,6 @@ function BusinessBody({
   const cat = getCategory(b.categorySlug ?? "");
   const plan = (b.plan as Plan) ?? "free";
   const canPhotos = hasCap(plan, "photos");
-  const canWhatsApp = hasCap(plan, "whatsapp");
   const cover = b.coverImageUrl ?? b.photos?.[0];
   const photos = b.photos ?? [];
   const isOwner = Boolean(uid && b.ownerUid === uid);
@@ -252,13 +253,30 @@ function BusinessBody({
     }
   }
 
+  const citySlug = b.citySlug ?? "pretoria";
+  const suburbSlug = b.suburbSlug ?? "pretoria-north";
+  const suburbName = getSuburb(citySlug, suburbSlug)?.name
+    ?? suburbSlug.replace(/-/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+  const categoryLabel = `${cat?.plural ?? "Category"} in ${suburbName}`;
+
   return (
-    <div className="max-w-4xl mx-auto px-4 py-8 space-y-6">
-      <nav className="text-xs text-[#1d3a5f]/60 flex flex-wrap gap-1">
-        <Link href="/" className="hover:underline">Home</Link> <span>/</span>
-        <Link href={`/${b.citySlug ?? "pretoria"}/${b.suburbSlug ?? "pretoria-north"}/${b.categorySlug ?? ""}`} className="hover:underline">{cat?.plural ?? "Category"} in {(b.suburbSlug ?? "").replace(/-/g, " ")}</Link> <span>/</span>
-        <span className="font-bold text-[#10243e]">{b.name}</span>
-      </nav>
+    <>
+      <div className="mx-auto w-full max-w-6xl px-4 pt-6 sm:px-6 lg:px-8">
+        <nav aria-label="Breadcrumb" className="text-xs font-bold text-[#1d3a5f]/60">
+          <ol className="flex flex-wrap items-center gap-1.5">
+            <li className="flex items-center gap-1.5">
+              <Link href="/" className="hover:text-[#10243e]">Home</Link>
+              <span aria-hidden="true">/</span>
+            </li>
+            <li className="flex items-center gap-1.5">
+              <Link href={`/${citySlug}/${suburbSlug}/${b.categorySlug ?? ""}`} className="hover:text-[#10243e]">{categoryLabel}</Link>
+              <span aria-hidden="true">/</span>
+            </li>
+            <li aria-current="page" className="break-words font-bold text-[#10243e]">{b.name}</li>
+          </ol>
+        </nav>
+      </div>
+      <main className="mx-auto w-full max-w-6xl px-4 py-8 space-y-6 sm:px-6 lg:px-8">
       <header className="hippo-card overflow-hidden !rounded-3xl anim-rise">
         {cover && <img src={cover} alt={`${b.name} cover`} className="h-56 w-full object-cover" />}
         <div className="p-6">
@@ -270,8 +288,7 @@ function BusinessBody({
             {/* Shows HOW it was verified and WHEN, not just a bare chip. See
                 VerificationBadge for why the provenance is public. */}
             <VerificationBadge verified={b.verified === true} verification={b.verification} />
-            {normalizePlanId(b.plan) === "business" && <span className="text-[10px] font-black uppercase tracking-widest bg-[#10243e] text-[#ffc72c] rounded-full px-2 py-0.5">Business sponsored</span>}
-            {normalizePlanId(b.plan) === "professional" && <span className="text-[10px] font-black uppercase tracking-widest bg-[#e8f6d8] text-[#3c6b1d] rounded-full px-2 py-0.5">Professional</span>}
+            {normalizePlanId(b.plan) === "premium" && <span className="text-[10px] font-black uppercase tracking-widest bg-[#e8f6d8] text-[#3c6b1d] rounded-full px-2 py-0.5">Premium</span>}
             {b.featured === true && <span className="text-[10px] font-black uppercase tracking-widest bg-[#e8f6d8] text-[#3c6b1d] rounded-full px-2 py-0.5">Featured</span>}
             {live && <span className="chip-live">Live</span>}
           </div>
@@ -287,21 +304,7 @@ function BusinessBody({
                 <KIcon name="message" size={15} /> Message
               </Link>
             )}
-            <a
-              href={`tel:${(b.phone ?? "").replace(/\s/g, "")}`}
-              onClick={() => trackBusinessEvent(id, "phoneClicks")}
-              className="btn-navy text-sm"
-            ><KIcon name="phone" size={14} className="inline shrink-0" /> {b.phone}</a>
-            {canWhatsApp && b.whatsapp && (
-              <a
-                target="_blank"
-                rel="noreferrer"
-                className="btn-hippo text-sm"
-                href={waLink(b.whatsapp, `Hi ${b.name}, I found you on ${SITE_SHORT}.`)}
-                onClick={() => trackBusinessEvent(id, "whatsappClicks")}
-              >WhatsApp</a>
-            )}
-            <Link href={`/request-quote?business=${id}`} className="btn-sun text-sm">Request quote →</Link>
+            <Link href={`/request-quote?business=${id}`} className="btn-sun text-sm">Request quote </Link>
             <button
               onClick={onFav}
               className={`text-sm font-extrabold rounded-full px-5 py-3 transition border-2 ${isFav ? "bg-[#ffc72c] border-[#ffc72c] text-[#10243e]" : "border-[#10243e] text-[#10243e] hover:bg-[#10243e] hover:text-white"}`}
@@ -342,10 +345,11 @@ function BusinessBody({
           )}
         </div>
         <div className="hippo-card p-5 text-sm space-y-1.5 text-[#1d3a5f]/75">
-          <h2 className="font-black text-[#10243e]">Contact & hours</h2>
-          <p><KIcon name="mapPin" size={14} className="inline shrink-0" /> {b.address}</p>
+          <h2 className="font-black text-[#10243e]">Business details & hours</h2>
+          <p><KIcon name="mapPin" size={14} className="inline shrink-0" /> {(b.suburbSlug ?? "").replace(/-/g, " ")}, {(b.citySlug ?? "").replace(/-/g, " ")}</p>
           <p><KIcon name="clock" size={14} className="inline shrink-0" /> {b.hours}</p>
           <div className="rounded-xl bg-[#fff4d6] text-[#a36508] px-3 py-2 mt-2 font-semibold"><KIcon name="tag" size={14} className="inline shrink-0" /> {b.priceNote}</div>
+          <p className="text-xs pt-2">Use Request a quote or Message to contact this business through {SITE_SHORT}; private contact details are not shown on public profiles.</p>
         </div>
       </div>
 
@@ -367,7 +371,7 @@ function BusinessBody({
         <div className="hippo-card p-5">
           <h2 className="font-black text-[#10243e]">Add photos (owner)</h2>
           <p className="text-xs text-[#1d3a5f]/60 mt-1">
-            <b>Recommended — free:</b> paste a public image link below (your Facebook page photo, Unsplash, imgbb…). Works on the free Spark plan — no Storage needed.
+            <b>Recommended — free:</b> paste a public image link below (your Facebook page photo, Unsplash, imgbb…). Starter has a fair-use profile photo limit.
           </p>
           <p className="text-xs text-[#1d3a5f]/60 mt-2">
             For finished jobs with before/after shots, use the <b>Portfolio</b> tab in your seller hub instead — that&apos;s what buyers compare.
@@ -384,14 +388,6 @@ function BusinessBody({
             </label>
           </details>
           {msg && <p className="text-sm font-bold text-[#3c6b1d] mt-2">{msg}</p>}
-        </div>
-      )}
-
-      {isOwner && !canPhotos && (
-        <div className="hippo-card p-5">
-          <h2 className="font-black text-[#10243e]">Photos are a PRO feature</h2>
-          <p className="text-sm text-[#1d3a5f]/70 mt-1">Upgrade to PRO (R199/mo) to add a photo gallery and a WhatsApp button. Current plan: <b className="uppercase">{plan}</b>.</p>
-          <Link href="/list-business" className="btn-sun text-sm mt-3 inline-flex">Upgrade plan →</Link>
         </div>
       )}
 
@@ -419,6 +415,7 @@ function BusinessBody({
           <Faq items={cat.faqs} />
         </section>
       )}
-    </div>
+      </main>
+    </>
   );
 }

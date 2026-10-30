@@ -8,6 +8,7 @@ import { cleanBody, MESSAGE_MAX, previewText, validateMessage, whenLabel, toMill
 import { SignInInline, ErrorNote } from "@/components/dash/parts";
 import { KIcon } from "@/lib/icons";
 import { SITE_SHORT } from "@/lib/site";
+import { PageHero } from "@/components/ui";
 
 type Row = Record<string, unknown>;
 
@@ -120,37 +121,67 @@ export default function MessagesClient({
 
   if (loading) {
     return (
-      <div className="max-w-2xl mx-auto px-4 py-20 text-center">
-        <div className="inline-block w-8 h-8 border-4 border-[#7ac142] border-t-transparent rounded-full animate-spin" />
-        <p className="text-sm text-[#1d3a5f]/60 mt-3">Loading your messages…</p>
-      </div>
+      <>
+        <PageHero kicker="Messages" title="Your conversations" sub="One thread per business, so nothing gets lost. Messages are private to you and the business you are talking to." />
+        <main className="mx-auto w-full max-w-6xl animate-pulse space-y-4 px-4 py-8 sm:px-6" role="status" aria-label="Loading your messages">
+          <span className="sr-only">Loading your messages</span>
+          <div className="grid gap-4 md:grid-cols-[20rem_1fr]">
+            <div className="hippo-card space-y-3 p-3">
+              {[0, 1, 2, 3].map((item) => (
+                <div key={item} className="rounded-xl border border-[#e7eef5] p-3">
+                  <div className="h-4 w-2/3 rounded bg-[#d6e1ec]" />
+                  <div className="mt-2 h-3 w-1/2 rounded bg-[#e7eef5]" />
+                </div>
+              ))}
+            </div>
+            <div className="hippo-card space-y-4 p-4">
+              <div className="border-b border-[#e7eef5] pb-4">
+                <div className="h-4 w-1/2 rounded bg-[#d6e1ec]" />
+                <div className="mt-2 h-3 w-2/3 rounded bg-[#e7eef5]" />
+              </div>
+              <div className="space-y-3 py-8">
+                <div className="h-10 w-2/3 rounded-2xl bg-[#e7eef5]" />
+                <div className="ml-auto h-10 w-1/2 rounded-2xl bg-[#d6e1ec]" />
+                <div className="h-10 w-3/5 rounded-2xl bg-[#e7eef5]" />
+              </div>
+              <div className="h-20 rounded-2xl bg-[#f2f6fa]" />
+            </div>
+          </div>
+        </main>
+      </>
     );
   }
 
   if (!user || !uid) {
     return (
-      <div className="max-w-2xl mx-auto px-4 py-16 text-center space-y-4">
-        <span className="icon-3d icon-3d-sm mx-auto" aria-hidden="true"><KIcon name="message" size={26} /></span>
-        <h1 className="text-3xl font-black text-[#10243e]">Messages</h1>
-        <p className="text-sm text-[#1d3a5f]/70 max-w-lg mx-auto">
+      <>
+        <PageHero
+          kicker="Messages"
+          title="Your conversations"
+          sub="One thread per business, so nothing gets lost. Messages are private to you and the business you are talking to."
+        />
+        <div className="mx-auto w-full max-w-6xl px-4 py-8 sm:px-6">
+          <div className="mx-auto max-w-2xl space-y-4 text-center">
+            <span className="icon-3d icon-3d-sm mx-auto" aria-hidden="true"><KIcon name="message" size={26} /></span>
+            <p className="text-sm text-[#1d3a5f]/70">
           Chat to a business about a quote, a date or a detail. Sign in to see your conversations —
           browsing {SITE_SHORT} stays free without an account.
-        </p>
-        <SignInInline />
-      </div>
+            </p>
+            <SignInInline />
+          </div>
+        </div>
+      </>
     );
   }
 
   return (
-    <div className="max-w-6xl mx-auto px-4 py-8">
-      <header className="mb-4">
-        <p className="text-xs font-extrabold uppercase tracking-[0.16em] text-[#558c2b]">Messages</p>
-        <h1 className="text-2xl sm:text-3xl font-black text-[#10243e]">Your conversations</h1>
-        <p className="text-sm text-[#1d3a5f]/70 mt-1 max-w-2xl">
-          One thread per business, so nothing gets lost. Messages are private to you and the business you
-          are talking to.
-        </p>
-      </header>
+    <>
+      <PageHero
+        kicker="Messages"
+        title="Your conversations"
+        sub="One thread per business, so nothing gets lost. Messages are private to you and the business you are talking to."
+      />
+      <main className="mx-auto w-full max-w-6xl min-w-0 px-4 py-8 sm:px-6">
 
       {err && <p className="mb-3 text-sm font-bold text-red-700 bg-red-50 rounded-2xl px-4 py-3">{err}</p>}
       {note && <p className="mb-3 text-sm font-bold text-[#3c6b1d] bg-[#e8f6d8] rounded-2xl px-4 py-3">{note}</p>}
@@ -169,7 +200,7 @@ export default function MessagesClient({
               <p className="text-xs text-[#1d3a5f]/60 mt-1">
                 Open a business profile or a quote and tap Message — the thread lands here.
               </p>
-              <Link href="/services" className="btn-hippo text-xs mt-3">Find a pro →</Link>
+              <Link href="/services" className="btn-hippo text-xs mt-3">Find a pro </Link>
             </div>
           ) : (
             <ul className="space-y-1">
@@ -219,25 +250,29 @@ export default function MessagesClient({
             </div>
           ) : (
             <>
-              <header className="flex flex-wrap items-center gap-x-3 gap-y-2 p-4 border-b border-[#e7eef5]">
-                <button onClick={() => setMobileThread(false)} className="md:hidden text-xs font-bold text-[#558c2b]">← Inbox</button>
-                <div className="min-w-0">
-                  <b className="block text-sm text-[#10243e] truncate">{active ? convLabel(active, uid) : "Conversation"}</b>
-                  <span className="text-[11px] text-[#1d3a5f]/60">
-                    {blocked ? "Blocked" : "Private between you and this business"}
-                  </span>
+              <header className="flex min-w-0 flex-col items-stretch gap-3 border-b border-[#e7eef5] p-3 md:flex-row md:items-center md:gap-4 md:p-4">
+                <div className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-start gap-x-3 gap-y-2 md:flex md:flex-1">
+                  <button onClick={() => setMobileThread(false)} className="row-span-2 mt-0.5 shrink-0 whitespace-nowrap text-left text-xs font-bold text-[#558c2b] md:hidden">← Inbox</button>
+                  <div className="col-start-2 min-w-0 md:col-auto">
+                    <b className="block break-words text-sm leading-5 text-[#10243e]">{active ? convLabel(active, uid) : "Conversation"}</b>
+                    <span className="mt-0.5 block break-words text-[11px] leading-4 text-[#1d3a5f]/60">
+                      {blocked ? "Blocked" : "Private between you and this business"}
+                    </span>
+                  </div>
                 </div>
-                {active?.businessId ? (
-                  <Link href={`/business/${String(active.businessId)}`} className="ml-auto text-xs font-bold text-[#558c2b] hover:underline">
-                    View profile
-                  </Link>
-                ) : null}
-                <button onClick={toggleBlock} className="text-xs font-bold text-[#10243e] hover:underline">
-                  {blocked ? (canUnblock ? "Unblock" : "Blocked") : "Block"}
-                </button>
-                <button onClick={report} className="text-xs font-bold text-red-700 hover:underline inline-flex items-center gap-1">
-                  <KIcon name="flag" size={12} className="inline shrink-0" /> Report
-                </button>
+                <div className={`grid w-full min-w-0 gap-2 md:w-auto md:shrink-0 md:flex md:items-center md:justify-end ${active?.businessId ? "grid-cols-3" : "grid-cols-2"}`}>
+                  {active?.businessId ? (
+                    <Link href={`/business/${String(active.businessId)}`} className="inline-flex min-h-10 items-center justify-center rounded-lg border border-[#d6e1ec] px-2 text-center text-xs font-bold text-[#558c2b] hover:bg-[#f2f6fa] md:min-h-0 md:border-0 md:px-0 md:text-left">
+                      View profile
+                    </Link>
+                  ) : null}
+                  <button onClick={toggleBlock} className="min-h-10 rounded-lg border border-[#d6e1ec] px-2 text-xs font-bold text-[#10243e] hover:bg-[#f2f6fa] md:min-h-0 md:border-0 md:px-0 md:text-left md:hover:underline">
+                    {blocked ? (canUnblock ? "Unblock" : "Blocked") : "Block"}
+                  </button>
+                  <button onClick={report} className="inline-flex min-h-10 items-center justify-center gap-1 rounded-lg border border-[#f3d5d5] px-2 text-xs font-bold text-red-700 hover:bg-red-50 md:min-h-0 md:border-0 md:px-0 md:text-left md:hover:underline">
+                    <KIcon name="flag" size={12} className="shrink-0" /> <span>Report</span>
+                  </button>
+                </div>
               </header>
 
               <div className="p-4 space-y-3 max-h-[26rem] overflow-y-auto bg-[#f8fafc]">
@@ -311,7 +346,7 @@ export default function MessagesClient({
           )}
         </section>
       </div>
-
-    </div>
+      </main>
+    </>
   );
 }

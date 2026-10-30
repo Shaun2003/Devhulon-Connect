@@ -203,7 +203,7 @@ export default function QuoteComposer({
           className="ml-auto text-xs font-extrabold text-[#558c2b] hover:underline"
           aria-expanded={open}
         >
-          {open ? "Close" : done ? "Send another quote" : "Send a quote →"}
+          {open ? "Close" : done ? "Send another quote" : "Send a quote "}
         </button>
       </div>
 
@@ -335,7 +335,7 @@ export default function QuoteComposer({
 
           <div className="flex flex-wrap items-center gap-2">
             <button disabled={busy} className="btn-hippo text-sm disabled:opacity-60">
-              {busy ? "Sending…" : "Send quote to buyer →"}
+              {busy ? "Sending…" : "Send quote to buyer "}
             </button>
             <button type="button" onClick={() => setOpen(false)} className="text-sm font-bold text-[#1d3a5f]/70 hover:underline">
               Cancel

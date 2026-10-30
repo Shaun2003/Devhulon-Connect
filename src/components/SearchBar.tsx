@@ -73,7 +73,7 @@ export default function SearchBar({ citySlug = "all" }: { citySlug?: string }) {
             className="w-full sm:w-auto sm:h-full bg-[#10243e] hover:bg-[#1d3a5f] text-white font-bold text-sm rounded-xl sm:rounded-r-none px-5 py-3 transition-colors inline-flex items-center justify-center gap-2 whitespace-nowrap"
           >
             Find pros
-            <KIcon name="arrowRight" size={16} />
+            
           </button>
         </div>
       </div>
@@ -85,15 +85,15 @@ export default function SearchBar({ citySlug = "all" }: { citySlug?: string }) {
   );
 }
 
-/** Compact icon row of popular services, shown under the hero on the homepage. */
+/** Compact icon row linking popular service groups to matching local pros. */
 export function QuickServiceChips() {
   return (
     <div className="flex flex-wrap items-center gap-2 justify-center">
       <span className="text-xs font-bold text-white/55">Popular:</span>
-      {SERVICE_GROUPS.slice(0, 5).map((g) => (
+      {SERVICE_GROUPS.map((g) => (
         <a
           key={g.slug}
-          href={`/find-pro?need=${encodeURIComponent(g.name)}`}
+          href={`/find-pro?need=${encodeURIComponent(g.name)}&serviceGroup=${encodeURIComponent(g.slug)}`}
           onClick={() => trackAnalyticsEvent("search_submitted", "search")}
           className="inline-flex items-center gap-1.5 rounded-full border border-white/25 bg-white/10 px-3 py-1.5 text-xs font-bold text-white/85 hover:bg-white/20 hover:border-white/40 transition-colors"
         >

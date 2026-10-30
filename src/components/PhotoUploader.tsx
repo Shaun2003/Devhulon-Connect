@@ -17,7 +17,7 @@ export default function PhotoUploader({ businessId }: { businessId: string }) {
   async function onAddLink(e: FormEvent) {
     e.preventDefault();
     const url = link.trim();
-    if (!/^https?:\/\/.+/i.test(url)) {
+    if (!/^https:\/\/.+/i.test(url)) {
       setMsg("Paste a photo link starting with https:// (e.g. from Unsplash or your Facebook page photo).");
       return;
     }

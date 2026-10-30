@@ -57,7 +57,7 @@ export function EmptyLine({ what, ctaHref, ctaLabel }: { what: string; ctaHref?:
   return (
     <p className="text-sm text-[#1d3a5f]/60">
       {what}{" "}
-      {ctaHref && ctaLabel && <Link href={ctaHref} className="font-bold text-[#558c2b] hover:underline">{ctaLabel} →</Link>}
+      {ctaHref && ctaLabel && <Link href={ctaHref} className="font-bold text-[#558c2b] hover:underline">{ctaLabel} </Link>}
     </p>
   );
 }
@@ -72,7 +72,7 @@ export function SignInInline() {
   const [open, setOpen] = useState(false);
   return (
     <>
-      <button onClick={() => setOpen(true)} className="btn-hippo text-sm">Sign in / Create account →</button>
+      <button onClick={() => setOpen(true)} className="btn-hippo text-sm">Sign in / Create account </button>
       <SignInModal open={open} onClose={() => setOpen(false)} />
     </>
   );

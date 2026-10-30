@@ -1,21 +1,29 @@
 "use client";
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { onAuthStateChanged, signInWithPopup, signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail, sendEmailVerification, GoogleAuthProvider, signOut, deleteUser, getAdditionalUserInfo, type User } from "firebase/auth";
-import { doc, setDoc, onSnapshot, getDoc } from "firebase/firestore";
+import { collection, doc, getDoc, getDocs, limit, onSnapshot, query, setDoc, where } from "firebase/firestore";
 import { auth, db, isFirebaseConfigured } from "@/lib/firebase";
 
 export type Role = "buyer" | "seller" | null;
 
 type AuthCtx = {
   user: User | null;
+  profileName: string;
+  profilePhotoURL: string;
+  profilePhoneNumber: string;
   role: Role;
+  roleLoading: boolean;
+  sellerAccountReady: boolean;
+  sellerAccountLoading: boolean;
   isAdmin: boolean;
   loading: boolean;
   unconfigured: boolean;
   signIn: (role: Role) => Promise<void>;
   signInSellerGoogle: () => Promise<void>;
+  signInSellerEmail: (email: string, password: string) => Promise<void>;
   signInEmail: (role: Role, email: string, password: string, mode: "signin" | "signup") => Promise<void>;
   signInGoogle: () => Promise<void>;
+  cancelSellerSetup: () => Promise<void>;
   signOutNow: () => Promise<void>;
   setRole: (role: Role) => Promise<void>;
   /** Email a password-reset link (spec §46). Never reveals whether the address exists. */
@@ -33,14 +41,20 @@ type AuthCtx = {
   refreshUser: () => Promise<void>;
 };
 const Ctx = createContext<AuthCtx>({
-  user: null, role: null, isAdmin: false, loading: false, unconfigured: true,
-  signIn: async () => {}, signInSellerGoogle: async () => {}, signInEmail: async () => {}, signInGoogle: async () => {}, signOutNow: async () => {}, setRole: async () => {},
+  user: null, profileName: "", profilePhotoURL: "", profilePhoneNumber: "", role: null, roleLoading: false, sellerAccountReady: false, sellerAccountLoading: false, isAdmin: false, loading: false, unconfigured: true,
+  signIn: async () => {}, signInSellerGoogle: async () => {}, signInSellerEmail: async () => {}, signInEmail: async () => {}, signInGoogle: async () => {}, cancelSellerSetup: async () => {}, signOutNow: async () => {}, setRole: async () => {},
   resetPassword: async () => {}, resendVerification: async () => {}, emailVerified: false, refreshUser: async () => {},
 });
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
+  const [profileName, setProfileName] = useState("");
+  const [profilePhotoURL, setProfilePhotoURL] = useState("");
+  const [profilePhoneNumber, setProfilePhoneNumber] = useState("");
   const [role, setRoleState] = useState<Role>(null);
+  const [roleLoading, setRoleLoading] = useState(() => Boolean(auth && isFirebaseConfigured));
+  const [sellerAccountReady, setSellerAccountReady] = useState(false);
+  const [sellerAccountLoading, setSellerAccountLoading] = useState(false);
   const [adminUid, setAdminUid] = useState<string | null>(null);
   // Start non-loading when Firebase is absent; avoids setState-in-effect.
   const [loading, setLoading] = useState(() => Boolean(auth && isFirebaseConfigured));
@@ -51,10 +65,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (!auth || !isFirebaseConfigured) return;
     return onAuthStateChanged(auth, (u) => {
       setUser(u);
+      setProfileName(u?.displayName ?? "");
+      setProfilePhotoURL(u?.photoURL ?? "");
+      setProfilePhoneNumber("");
       setLoading(false);
       setEmailVerified(Boolean(u?.emailVerified));
+      setRoleState(null);
+      setRoleLoading(Boolean(u));
+      setSellerAccountReady(false);
+      setSellerAccountLoading(false);
       if (!u) {
-        setRoleState(null);
         setAdminUid(null);
       }
     });
@@ -66,22 +86,64 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // auth-state render that produces a fresh User instance.
   const uid = user?.uid ?? null;
   useEffect(() => {
-    // Sign-out role reset happens in onAuthStateChanged above — doing it here as
-    // well would be a synchronous setState in an effect (cascading render).
-    if (!db || !uid) return;
-    return onSnapshot(
-      doc(db, "users", uid),
+    const firestore = db;
+    if (!firestore || !uid) return;
+    let active = true;
+    let sellerCheck = 0;
+    const unsubscribe = onSnapshot(
+      doc(firestore, "users", uid),
       (snap) => {
+        const checkId = ++sellerCheck;
         if (snap.exists()) {
-          const data = snap.data() as { role?: string };
-          setRoleState(data.role === "seller" ? "seller" : data.role === "buyer" ? "buyer" : null);
+          const data = snap.data() as { role?: string; name?: string; photoURL?: string; phoneNumber?: string };
+          setProfileName(typeof data.name === "string" && data.name.trim() ? data.name : user?.displayName ?? "");
+          setProfilePhotoURL(typeof data.photoURL === "string" ? data.photoURL : user?.photoURL ?? "");
+          setProfilePhoneNumber(typeof data.phoneNumber === "string" ? data.phoneNumber : "");
+          const nextRole = data.role === "seller" ? "seller" : data.role === "buyer" ? "buyer" : null;
+          setRoleState(nextRole);
+          setRoleLoading(false);
+          if (nextRole !== "seller") {
+            setSellerAccountReady(false);
+            setSellerAccountLoading(false);
+          } else {
+            setSellerAccountReady(false);
+            setSellerAccountLoading(true);
+            void getDocs(query(collection(firestore, "businesses"), where("ownerUid", "==", uid), limit(1)))
+              .then((businesses) => {
+                if (!active || sellerCheck !== checkId) return;
+                setSellerAccountReady(!businesses.empty);
+                setSellerAccountLoading(false);
+              })
+              .catch((error: unknown) => {
+                if (!active || sellerCheck !== checkId) return;
+                console.warn("[KASI] seller profile check failed:", error instanceof Error ? error.message : error);
+                setSellerAccountReady(false);
+                setSellerAccountLoading(false);
+              });
+          }
         } else {
+          setProfileName(user?.displayName ?? "");
+          setProfilePhotoURL(user?.photoURL ?? "");
+          setProfilePhoneNumber("");
           setRoleState(null);
+          setRoleLoading(false);
+          setSellerAccountReady(false);
+          setSellerAccountLoading(false);
         }
       },
-      (err) => { console.warn("[KASI] role listener failed (check Firestore rules):", err.message); }
+      (err) => {
+        setRoleState(null);
+        setRoleLoading(false);
+        setSellerAccountReady(false);
+        setSellerAccountLoading(false);
+        console.warn("[KASI] role listener failed (check Firestore rules):", err.message);
+      }
     );
-  }, [uid]);
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, [uid, user?.displayName, user?.photoURL]);
 
   useEffect(() => {
     if (!db || !uid) return;
@@ -180,6 +242,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  /** Seller sign-in verifies the saved role; it never upgrades a buyer account. */
+  const signInSellerEmail = async (email: string, password: string) => {
+    if (!auth || !db) throw new Error("Firebase not configured — add NEXT_PUBLIC_FIREBASE_* to .env.local and restart.");
+    await signInEmail(null, email, password, "signin");
+    const signedInUser = auth.currentUser;
+    if (!signedInUser) throw new Error("Sign-in could not be confirmed.");
+    let profile;
+    try {
+      profile = await getDoc(doc(db, "users", signedInUser.uid));
+    } catch (error) {
+      await signOut(auth);
+      throw error;
+    }
+    if (!profile.exists() || profile.data().role !== "seller") {
+      await signOut(auth);
+      throw new Error("No seller account is registered with this email. Sign in as a buyer or complete seller registration.");
+    }
+  };
+
   const signInGoogle = () => signIn(null);
 
   const setRole = async (r: Role) => {
@@ -195,6 +276,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const signOutNow = async () => { if (auth) await signOut(auth); };
+
+  const cancelSellerSetup = async () => {
+    const currentUser = auth?.currentUser;
+    if (!currentUser) throw new Error("Sign in before cancelling seller setup.");
+    const token = await currentUser.getIdToken();
+    const response = await fetch("/api/seller/cancel-setup", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const result = await response.json().catch(() => ({})) as { ok?: boolean; error?: string };
+    if (!response.ok || !result.ok) {
+      throw new Error(result.error ?? "Could not cancel seller setup.");
+    }
+    setRoleState("buyer");
+    setSellerAccountReady(false);
+    setSellerAccountLoading(false);
+  };
 
   const resetPassword = async (email: string) => {
     if (!auth) throw new Error("Firebase not configured — add NEXT_PUBLIC_FIREBASE_* to .env.local and restart.");
@@ -225,7 +323,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <Ctx.Provider value={{ user, role, isAdmin: Boolean(uid && adminUid === uid), loading, unconfigured: !isFirebaseConfigured, signIn, signInSellerGoogle, signInEmail, signInGoogle, signOutNow, setRole, resetPassword, resendVerification, emailVerified, refreshUser }}>
+    <Ctx.Provider value={{ user, profileName, profilePhotoURL, profilePhoneNumber, role, roleLoading, sellerAccountReady, sellerAccountLoading, isAdmin: Boolean(uid && adminUid === uid), loading, unconfigured: !isFirebaseConfigured, signIn, signInSellerGoogle, signInSellerEmail, signInEmail, signInGoogle, cancelSellerSetup, signOutNow, setRole, resetPassword, resendVerification, emailVerified, refreshUser }}>
       {children}
     </Ctx.Provider>
   );

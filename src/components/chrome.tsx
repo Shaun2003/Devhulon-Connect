@@ -24,18 +24,18 @@ export function Header() {
   return (
     <header className="sticky top-0 z-40 shadow-[0_2px_16px_-8px_rgba(11,30,51,0.4)]">
       <div className="bg-[#0b1e33] text-white/85 text-[12px]">
-        <div className="w-full px-4 py-1.5 flex items-center gap-3 sm:px-6 lg:px-8">
+        <div className="w-full px-4 py-1 flex items-center gap-3 sm:px-6 lg:px-8">
           <span className="inline-flex items-center gap-1.5">
             <span className="inline-block w-2 h-2 rounded-full bg-[#7ac142]" />
             Connecting buyers and service providers
           </span>
           <span className="ml-auto hidden sm:flex items-center gap-3">
-            <Link href="/advertise" className="hover:text-white">For business</Link>
+            <Link href="/pricing" className="hover:text-white">For business</Link>
           </span>
         </div>
       </div>
       <div className="bg-white">
-        <div className="w-full px-4 py-3 flex items-center gap-2 sm:gap-3 sm:px-6 lg:px-8">
+        <div className="w-full px-4 py-2.5 flex items-center gap-2 sm:gap-3 sm:px-6 lg:px-8">
           <Link href="/" className="flex min-w-0 shrink items-center" aria-label={`${SITE_SHORT} home`}>
             <Image src="/devhulon-connect-logo.png" alt={SITE_SHORT} width={1600} height={639} priority className="h-auto w-[132px] max-[380px]:w-[112px] sm:w-[170px] lg:w-[160px]" />
           </Link>
@@ -105,7 +105,6 @@ export function Footer() {
           <nav aria-label="For providers">
             <h2 className="mb-2 text-xs font-bold uppercase tracking-wider text-white">For providers</h2>
             <Link className="block py-1 text-sm hover:text-[#ffc72c]" href="/pricing">Plans &amp; pricing</Link>
-            <Link className="block py-1 text-sm hover:text-[#ffc72c]" href="/advertise">Advertise</Link>
           </nav>
         </div>
 

@@ -40,7 +40,7 @@ function FunnelBar({ label, value, max, tone }: { label: string; value: number; 
  * rules-protected counters — nothing is estimated or faked.
  *
  * Gating (§21/§60): the overview is Starter-level (basicAnalytics); the weekly
- * trend chart and conversion funnel are advancedAnalytics (Professional+), and
+ * trend chart and conversion funnel are advancedAnalytics (Premium), and
  * the locked state is an upgrade offer, never a broken screen.
  */
 export default function SellerAnalytics({
@@ -135,10 +135,10 @@ export default function SellerAnalytics({
             <h3 className="font-black text-[#10243e]">Advanced Analytics</h3>
           </div>
           <p className="text-sm text-[#1d3a5f]/70 mt-1">
-            Weekly trends, conversion funnels and click-through detail are available on the Professional
-            and Business plans. The overview above stays free on every plan.
+            Weekly trends, conversion funnels and click-through detail are available on Premium.
+            The overview above stays free on every plan.
           </p>
-          <Link href="/advertise" className="btn-hippo text-sm mt-3 inline-flex">View plans →</Link>
+          <Link href="/pricing" className="btn-hippo text-sm mt-3 inline-flex">View plans </Link>
         </section>
       )}
     </div>

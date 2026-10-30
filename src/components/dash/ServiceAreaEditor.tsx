@@ -8,9 +8,9 @@ import { KIcon } from "@/lib/icons";
 
 /**
  * Service-area editor (§9 / §10). Sellers type the suburbs they cover; the
- * PLAN decides how many — 1 on Starter, 2 on Professional, unlimited on
- * Business. The cap is enforced again by /api/business on the server, so this
- * helper text is guidance, not the guardrail.
+ * PLAN decides how many — 1 on Starter, unlimited on Premium. The cap is
+ * enforced again by /api/business on the server, so this helper text is
+ * guidance, not the guardrail.
  */
 export default function ServiceAreaEditor({
   businessId,
@@ -80,7 +80,7 @@ export default function ServiceAreaEditor({
         {over && (
           <span className="text-xs font-bold text-[#a36508] bg-[#fff4d6] rounded-2xl px-3 py-2">
             That&apos;s {cleaned.length} areas — your plan covers {limit}. Keep {limit} or{" "}
-            <Link href="/advertise" className="underline">upgrade</Link>.
+            <Link href="/pricing" className="underline">upgrade</Link>.
           </span>
         )}
         {error && <span className="text-xs font-bold text-red-700 bg-red-50 rounded-2xl px-3 py-2">{error}</span>}

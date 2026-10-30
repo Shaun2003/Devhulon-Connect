@@ -21,6 +21,7 @@ import { usePlans } from "@/components/PlanConfigProvider";
 import { verifyCheckout } from "@/lib/monetize";
 import type { PlanId } from "@/lib/plans";
 import { KIcon } from "@/lib/icons";
+import { RequiredFieldsLegend } from "@/components/forms/FormFields";
 
 type RegistrationStep = 1 | 2 | 3 | 4 | 5 | 6 | 7;
 
@@ -128,16 +129,20 @@ async function recordTermsAcceptance() {
 
 function Field({
   label,
+  required = false,
   children,
   hint,
 }: {
   label: string;
+  required?: boolean;
   children: ReactNode;
   hint?: string;
 }) {
   return (
     <label className="block text-sm font-bold text-[#10243e]">
-      {label}
+      <span>{label} {required
+        ? <span className="font-black text-red-600" aria-hidden="true">*</span>
+        : <span className="font-medium text-[#1d3a5f]/55">(Optional)</span>}</span>
       {children}
       {hint && <span className="mt-1 block text-xs font-normal text-[#1d3a5f]/60">{hint}</span>}
     </label>
@@ -164,6 +169,7 @@ export default function SellerRegistration() {
   const [smsCode, setSmsCode] = useState("");
   const [smsVerificationId, setSmsVerificationId] = useState("");
   const [period, setPeriod] = useState<"monthly" | "annual">("monthly");
+  const [autoRenew, setAutoRenew] = useState(false);
   const [paymentReference, setPaymentReference] = useState("");
   const [paymentPending, setPaymentPending] = useState(false);
   const recaptchaElement = useRef<HTMLDivElement | null>(null);
@@ -179,10 +185,6 @@ export default function SellerRegistration() {
   const subscriptionStatus = String(subscriptionDoc.subscription_status ?? subscriptionDoc.status ?? "");
   const hasActivePlan = ["active", "trialing", "past_due"].includes(subscriptionStatus);
   const activePlan = String(subscriptionDoc.plan ?? "");
-  const starterPlan = plans.find((plan) => plan.id === "starter");
-  const starterAreaLimit = starterPlan?.limits.locations ?? 1;
-  const starterServiceLimit = starterPlan?.limits.services ?? 5;
-
   const cities = useMemo(() => zaCitiesForProvince(draft.province), [draft.province]);
   const areas = useMemo(() => zaAreasForCity(draft.city), [draft.city]);
   const sortedAreas = useMemo(() => [...areas].sort((a, b) => a.name.localeCompare(b.name)), [areas]);
@@ -300,6 +302,15 @@ export default function SellerRegistration() {
 
   async function createAccount(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const invalidField = Array.from(event.currentTarget.querySelectorAll<HTMLInputElement>("input"))
+      .find((field) => !field.disabled && !field.validity.valid);
+    if (invalidField) {
+      invalidField.setAttribute("aria-invalid", "true");
+      invalidField.setAttribute("aria-describedby", "seller-registration-error");
+      setError(`${invalidField.labels?.[0]?.innerText.replace("*", "").trim() ?? "This field"}: ${invalidField.validationMessage || "Check this field."}`);
+      invalidField.focus();
+      return;
+    }
     setBusy(true);
     setError(null);
     setNotice(null);
@@ -416,9 +427,12 @@ export default function SellerRegistration() {
         if (!draft.businessName.trim()) throw new Error("Enter your business name.");
         if (!draft.categoryGroup || !draft.category) throw new Error("Choose a main service and your specific service.");
         if (!draft.businessPhone.trim()) throw new Error("Enter a business contact number.");
+        if (draft.businessEmail.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(draft.businessEmail.trim())) {
+          throw new Error("Enter a valid business email address or leave it blank.");
+        }
       }
       if (nextStep > draft.step && draft.step === 4) {
-        if (!draft.city || draft.suburbs.length === 0) throw new Error("Choose a city and at least one suburb you serve.");
+        if (!draft.province || !draft.city || draft.suburbs.length === 0) throw new Error("Choose a province, city, and at least one suburb you serve.");
         if (!draft.services.trim()) throw new Error("Add at least one service or keyword.");
       }
       if (nextStep > draft.step && draft.step === 5) {
@@ -433,9 +447,9 @@ export default function SellerRegistration() {
     }
   }
 
-  async function startPlan(planId: PlanId | "trial") {
+  async function startPlan(planId: PlanId) {
     if (!user) return;
-    const selectedPlan: PlanId = planId === "trial" ? "starter" : planId;
+    const selectedPlan = planId;
     const supportsAreas = plans.find((plan) => plan.id === selectedPlan)?.limits.locations;
     if (supportsAreas !== null && supportsAreas !== undefined && suburbsNeeded > supportsAreas) {
       setError(`Your selected service areas need a plan that supports ${suburbsNeeded} locations.`);
@@ -447,17 +461,17 @@ export default function SellerRegistration() {
     try {
       await persist({ ...draft, selectedPlan });
       const result: CheckoutResult = await subscribeSeller(
-        planId === "trial" ? "free" : planId,
+        planId,
         undefined,
-        { period, onboarding: true },
+        { period, onboarding: true, autoRenew: planId === "premium" && autoRenew },
       );
       if (result.url) {
         window.location.href = result.url;
         return;
       }
-      if (result.trial) {
+      if (result.ok && result.plan === "starter") {
         await persist({ ...draft, selectedPlan: "starter", step: 7 });
-        setNotice(result.message ?? "Your free trial is active. Finish activating your dashboard.");
+        setNotice(result.message ?? "Your free Starter plan is active. Finish activating your dashboard.");
         return;
       }
       setError(result.message ?? "We couldn't activate that plan.");
@@ -468,22 +482,10 @@ export default function SellerRegistration() {
     }
   }
 
-  async function continueWithFreeListing() {
-    setBusy(true);
-    setError(null);
-    try {
-      await persist({ ...draft, selectedPlan: "starter", step: 7 });
-    } catch (e) {
-      setError(errorMessage(e));
-    } finally {
-      setBusy(false);
-    }
-  }
-
   async function activateDashboard() {
     if (!user) return;
     if (!listingConsent) {
-      setError("Please consent to publishing your business contact details on the public listing.");
+      setError("Please agree to store your business contact details for marketplace enquiries.");
       return;
     }
     const portfolioParts = [draft.portfolioTitle, draft.portfolioDescription, draft.portfolioImageUrl].map((value) => value.trim());
@@ -574,7 +576,7 @@ export default function SellerRegistration() {
         ))}
       </div>
 
-      {error && <p className="mt-5 rounded-xl bg-red-50 px-3 py-2.5 text-sm font-bold text-red-700" role="alert">{error}</p>}
+      {error && <p id="seller-registration-error" className="mt-5 rounded-xl bg-red-50 px-3 py-2.5 text-sm font-bold text-red-700" role="alert">{error}</p>}
       {notice && <p className="mt-5 rounded-xl bg-[#e8f6d8] px-3 py-2.5 text-sm font-bold text-[#3c6b1d]" role="status">{notice}</p>}
 
       {!user && (
@@ -586,21 +588,42 @@ export default function SellerRegistration() {
               {mode === "signup" ? "Already registered? Sign in" : "New seller? Create an account"}
             </button>
           </div>
-          <form onSubmit={createAccount} className="mt-5 space-y-3">
+          <form
+            onSubmit={createAccount}
+            noValidate
+            onInvalidCapture={(event) => {
+              const field = event.target;
+              if (field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement || field instanceof HTMLSelectElement) {
+                field.setAttribute("aria-invalid", "true");
+                setError(`${field.labels?.[0]?.innerText.replace("*", "").trim() ?? "This field"}: ${field.validationMessage}`);
+              }
+            }}
+            onInputCapture={(event) => {
+              const field = event.target;
+              if ((field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement || field instanceof HTMLSelectElement) && field.validity.valid) {
+                field.removeAttribute("aria-invalid");
+                field.removeAttribute("aria-describedby");
+                setError(null);
+              }
+            }}
+            className="mt-5 space-y-3"
+          >
+            <RequiredFieldsLegend />
             {mode === "signup" && (
               <>
-                <Field label="Full name"><input className={inputClass} autoComplete="name" required minLength={2} value={draft.name} onChange={(e) => update("name", e.target.value)} /></Field>
-                <Field label="Mobile number" hint="Include your South African mobile number. SMS verification is optional.">
-                  <input className={inputClass} type="tel" autoComplete="tel" required value={draft.phone} onChange={(e) => update("phone", e.target.value)} placeholder="082 123 4567" />
+                <Field label="Full name" required><input className={inputClass} autoComplete="name" required minLength={2} value={draft.name} onChange={(e) => update("name", e.target.value)} /></Field>
+                <Field label="Mobile number" required hint="Include your South African mobile number. SMS verification is optional.">
+                  <input className={inputClass} type="tel" autoComplete="tel" required minLength={10} value={draft.phone} onChange={(e) => update("phone", e.target.value)} placeholder="082 123 4567" />
                 </Field>
               </>
             )}
-            <Field label="Email address"><input className={inputClass} type="email" autoComplete="email" required value={draft.email} onChange={(e) => update("email", e.target.value)} placeholder="you@example.com" /></Field>
-            <Field label="Password"><input className={inputClass} type="password" autoComplete={mode === "signup" ? "new-password" : "current-password"} minLength={6} required value={password} onChange={(e) => setPassword(e.target.value)} /></Field>
+            <Field label="Email address" required><input className={inputClass} type="email" autoComplete="email" required value={draft.email} onChange={(e) => update("email", e.target.value)} placeholder="you@example.com" /></Field>
+            <Field label="Password" required><input className={inputClass} type="password" autoComplete={mode === "signup" ? "new-password" : "current-password"} minLength={6} required value={password} onChange={(e) => setPassword(e.target.value)} /></Field>
             {mode === "signup" && (
               <label className="flex items-start gap-2.5 pt-1 text-xs leading-relaxed text-[#10243e]">
                 <input type="checkbox" required checked={agreed} onChange={(e) => setAgreed(e.target.checked)} className="mt-0.5 h-4 w-4 shrink-0 rounded border-[#1d3a5f] text-[#558c2b] focus:ring-[#7ac142]" />
                 <span>
+                  <span className="mr-1 font-black text-red-600" aria-hidden="true">*</span>
                   {SIGNUP_TERMS_LABEL}{" "}
                   <Link href="/terms" className="font-bold text-[#558c2b] underline">Terms</Link>
                   {" · "}
@@ -611,8 +634,8 @@ export default function SellerRegistration() {
                 </span>
               </label>
             )}
-            <button type="submit" disabled={busy || (mode === "signup" && !agreed)} className="btn-hippo w-full text-sm disabled:opacity-60">
-              {busy ? "Please wait…" : mode === "signup" ? "Create seller account →" : "Sign in and continue →"}
+            <button type="submit" disabled={busy} className="btn-hippo w-full text-sm disabled:opacity-60">
+              {busy ? "Please wait…" : mode === "signup" ? "Create seller account " : "Sign in and continue "}
             </button>
           </form>
           {termsPending && (
@@ -626,6 +649,7 @@ export default function SellerRegistration() {
 
       {user && registrationStep === 2 && (
         <div className="mt-6 space-y-4">
+          <RequiredFieldsLegend />
           <div className="rounded-xl border border-[#e7eef5] p-4">
             <p className="font-extrabold text-[#10243e]">Email · {user.email}</p>
             <p className="mt-1 text-sm text-[#1d3a5f]/65">{emailVerified ? "Verified" : "Open the verification link sent to your inbox, then confirm below."}</p>
@@ -648,8 +672,8 @@ export default function SellerRegistration() {
           </div>
 
           <div className="rounded-xl border border-[#e7eef5] p-4">
-            <Field label="Mobile number" hint="A valid South African number is required to continue; SMS verification is optional.">
-              <input className={inputClass} type="tel" autoComplete="tel" value={draft.phone} onChange={(e) => update("phone", e.target.value)} placeholder="082 123 4567" />
+            <Field label="Mobile number" required hint="A valid South African number is required to continue; SMS verification is optional.">
+              <input className={inputClass} type="tel" autoComplete="tel" required minLength={10} value={draft.phone} onChange={(e) => update("phone", e.target.value)} placeholder="082 123 4567" />
             </Field>
             <p className="mt-1 text-sm text-[#1d3a5f]/65">
               {draft.smsVerified ? "Mobile number verified." : "SMS verification is optional. You can continue without an OTP."}
@@ -674,7 +698,7 @@ export default function SellerRegistration() {
           <div className="flex flex-wrap justify-between gap-3">
             <button type="button" onClick={() => void setRole("seller")} className="text-sm font-bold text-[#558c2b] hover:underline">Seller account selected</button>
             <button type="button" disabled={busy || !emailVerified} onClick={() => void continueStep(3)} className="btn-hippo text-sm disabled:opacity-50">
-              {busy ? "Saving…" : "Continue to business →"}
+              {busy ? "Saving…" : "Continue to business "}
             </button>
           </div>
         </div>
@@ -682,13 +706,14 @@ export default function SellerRegistration() {
 
       {user && registrationStep === 3 && (
         <div className="mt-6 space-y-3">
-          <Field label="Business name"><input className={inputClass} required value={draft.businessName} onChange={(e) => update("businessName", e.target.value)} placeholder="e.g. Mokoena Plumbing" /></Field>
+          <RequiredFieldsLegend />
+          <Field label="Business name" required><input className={inputClass} required minLength={2} value={draft.businessName} onChange={(e) => update("businessName", e.target.value)} placeholder="e.g. Mokoena Plumbing" /></Field>
           <Field label="Business type">
             <select className={inputClass} value={draft.businessType} onChange={(e) => update("businessType", e.target.value)}>
               <option value="sole-trader">Sole trader</option><option value="company">Registered company</option><option value="partnership">Partnership</option><option value="non-profit">Non-profit</option><option value="other">Other</option>
             </select>
           </Field>
-          <Field label="Business category">
+          <Field label="Business category" required>
             <select className={inputClass} required value={draft.categoryGroup} onChange={(e) => {
               update("categoryGroup", e.target.value);
               update("category", "");
@@ -697,7 +722,7 @@ export default function SellerRegistration() {
               {signupGroups.map((group) => <option key={group.slug} value={group.slug}>{group.name}</option>)}
             </select>
           </Field>
-          <Field label="Specific service">
+          <Field label="Specific service" required>
             <select
               className={inputClass}
               required
@@ -711,7 +736,7 @@ export default function SellerRegistration() {
               ))}
             </select>
           </Field>
-          <Field label="Business contact number"><input className={inputClass} type="tel" required value={draft.businessPhone} onChange={(e) => update("businessPhone", e.target.value)} /></Field>
+          <Field label="Business contact number" required><input className={inputClass} type="tel" required minLength={6} value={draft.businessPhone} onChange={(e) => update("businessPhone", e.target.value)} /></Field>
           <Field label="Business email"><input className={inputClass} type="email" value={draft.businessEmail} onChange={(e) => update("businessEmail", e.target.value)} placeholder={draft.email} /></Field>
           <StepButtons busy={busy} back={() => void continueStep(2)} next={() => void continueStep(4)} />
         </div>
@@ -719,8 +744,9 @@ export default function SellerRegistration() {
 
       {user && registrationStep === 4 && (
         <div className="mt-6 space-y-3">
-          <Field label="Province">
-            <select className={inputClass} value={draft.province} onChange={(e) => {
+          <RequiredFieldsLegend />
+          <Field label="Province" required>
+            <select className={inputClass} required value={draft.province} onChange={(e) => {
               const province = e.target.value;
               const firstCity = zaCitiesForProvince(province)[0]?.slug ?? "";
               update("province", province);
@@ -729,15 +755,15 @@ export default function SellerRegistration() {
               {zaProvinces.map((province) => <option key={province.slug} value={province.slug}>{province.name}</option>)}
             </select>
           </Field>
-          <Field label="City">
-            <select className={inputClass} value={draft.city} onChange={(e) => { update("city", e.target.value); update("suburbs", []); }}>
+          <Field label="City" required>
+            <select className={inputClass} required value={draft.city} onChange={(e) => { update("city", e.target.value); update("suburbs", []); }}>
               {cities.map((city) => <option key={city.slug} value={city.slug}>{city.name}</option>)}
             </select>
           </Field>
           <div>
-            <p className="text-sm font-bold text-[#10243e]">Suburbs you serve</p>
+            <p id="seller-suburbs-label" className="text-sm font-bold text-[#10243e]">Suburbs you serve <span className="font-black text-red-600" aria-hidden="true">*</span></p>
             <p className="mt-1 text-xs text-[#1d3a5f]/60">Select at least one. Your plan determines how many areas you can publish.</p>
-            <div className="mt-2 grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-56 overflow-y-auto rounded-xl border border-[#e7eef5] p-3">
+            <div className="mt-2 grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-56 overflow-y-auto rounded-xl border border-[#e7eef5] p-3" role="group" aria-labelledby="seller-suburbs-label" aria-describedby="seller-suburbs-required">
               {sortedAreas.map((area) => (
                 <label key={area.slug} className="flex items-center gap-2 text-xs font-medium text-[#10243e]">
                   <input type="checkbox" checked={draft.suburbs.includes(area.slug)} onChange={() => toggleSuburb(area.slug)} className="h-4 w-4 rounded border-[#1d3a5f] text-[#558c2b] focus:ring-[#7ac142]" />
@@ -746,14 +772,15 @@ export default function SellerRegistration() {
               ))}
               {sortedAreas.length === 0 && <p className="col-span-full text-xs text-[#1d3a5f]/60">No suburb list is available for this city; choose another city.</p>}
             </div>
+            <p id="seller-suburbs-required" className="sr-only">Choose at least one service area.</p>
           </div>
           <Field label="Travel radius" hint="Used to describe how far you travel from your selected areas.">
             <select className={inputClass} value={draft.travelRadiusKm} onChange={(e) => update("travelRadiusKm", e.target.value)}>
               {[5, 10, 20, 30, 50, 100].map((radius) => <option key={radius} value={String(radius)}>{radius} km</option>)}
             </select>
           </Field>
-          <Field label="Services and search keywords" hint="Separate services with commas. Your plan limits the number of service keywords.">
-            <textarea className={inputClass} rows={3} value={draft.services} onChange={(e) => update("services", e.target.value)} placeholder="Emergency repairs, installations, maintenance" />
+          <Field label="Services and search keywords" required hint="Separate services with commas. Your plan limits the number of service keywords.">
+            <textarea className={inputClass} required minLength={2} rows={3} value={draft.services} onChange={(e) => update("services", e.target.value)} placeholder="Emergency repairs, installations, maintenance" />
           </Field>
           <StepButtons busy={busy} back={() => void continueStep(3)} next={() => void continueStep(5)} />
         </div>
@@ -761,12 +788,13 @@ export default function SellerRegistration() {
 
       {user && registrationStep === 5 && (
         <div className="mt-6 space-y-3">
-          <Field label="Profile description" hint="Tell customers what you do and why they should choose you.">
-            <textarea className={inputClass} rows={4} minLength={20} value={draft.description} onChange={(e) => update("description", e.target.value)} />
+          <RequiredFieldsLegend />
+          <Field label="Profile description" required hint="Tell customers what you do and why they should choose you.">
+            <textarea className={inputClass} rows={4} required minLength={20} value={draft.description} onChange={(e) => update("description", e.target.value)} />
           </Field>
           <Field label="Years of experience"><input className={inputClass} type="number" min="0" max="100" value={draft.yearsExperience} onChange={(e) => update("yearsExperience", e.target.value)} /></Field>
           <Field label="Price guide" hint="For example: Call-out from R450 · quotes are free"><input className={inputClass} value={draft.priceNote} onChange={(e) => update("priceNote", e.target.value)} /></Field>
-          <Field label="Working hours"><input className={inputClass} value={draft.hours} onChange={(e) => update("hours", e.target.value)} placeholder="Mon–Fri 08:00–17:00, Sat by appointment" /></Field>
+          <Field label="Working hours" required><input className={inputClass} required value={draft.hours} onChange={(e) => update("hours", e.target.value)} placeholder="Mon–Fri 08:00–17:00, Sat by appointment" /></Field>
           <div className="rounded-xl border border-[#e7eef5] p-4 space-y-3">
             <div><p className="font-extrabold text-[#10243e]">Portfolio project <span className="font-medium text-[#1d3a5f]/55">(optional)</span></p><p className="mt-1 text-xs text-[#1d3a5f]/60">Add one project now; you can add more from your dashboard.</p></div>
             <Field label="Project title"><input className={inputClass} value={draft.portfolioTitle} onChange={(e) => update("portfolioTitle", e.target.value)} /></Field>
@@ -782,15 +810,19 @@ export default function SellerRegistration() {
           {hasActivePlan ? (
             <div className="rounded-xl bg-[#e8f6d8] p-4 text-sm text-[#3c6b1d]">
               Your {activePlan || "current"} subscription is active. Continue to activate your seller profile.
-              <button type="button" onClick={() => void continueStep(7)} className="mt-3 block font-extrabold underline">Continue →</button>
+              <button type="button" onClick={() => void continueStep(7)} className="mt-3 block font-extrabold underline">Continue </button>
             </div>
           ) : (
             <>
-              <p className="text-sm text-[#1d3a5f]/70">Start with a one-time eligible 7-day Starter trial or choose a paid subscription. Trial eligibility is checked securely by the billing service.</p>
+              <p className="text-sm text-[#1d3a5f]/70">Choose Starter for free or Premium for R300/month. Starter includes 35 monthly credits and up to 3 eligible lead opportunities; Premium includes 300 monthly credits and unlimited eligible opportunities.</p>
               <div className="flex items-center justify-center gap-2" role="group" aria-label="Billing period">
                 <button type="button" aria-pressed={period === "monthly"} onClick={() => setPeriod("monthly")} className={`rounded-full px-4 py-2 text-xs font-extrabold ${period === "monthly" ? "bg-[#10243e] text-white" : "border-2 border-[#e7eef5] text-[#10243e]"}`}>Monthly</button>
                 <button type="button" aria-pressed={period === "annual"} onClick={() => setPeriod("annual")} className={`rounded-full px-4 py-2 text-xs font-extrabold ${period === "annual" ? "bg-[#10243e] text-white" : "border-2 border-[#e7eef5] text-[#10243e]"}`}>Annual</button>
               </div>
+              <label className="mx-auto flex max-w-xl items-start gap-2 text-xs text-[#1d3a5f]/75">
+                <input type="checkbox" checked={autoRenew} onChange={(event) => setAutoRenew(event.target.checked)} className="mt-0.5 accent-[#7ac142]" />
+                <span>Automatic Premium renewal <span className="font-medium text-[#1d3a5f]/55">(Optional)</span> — opt in through Paystack at the displayed period and price. You may cancel at any time and keep access through the paid period.</span>
+              </label>
               <div className="grid sm:grid-cols-3 gap-3">
                 {plans.map((plan) => {
                   const areaCap = plan.limits.locations;
@@ -810,28 +842,6 @@ export default function SellerRegistration() {
                   );
                 })}
               </div>
-              {plans.some((plan) => plan.id === "starter" &&
-                (plan.limits.locations === null || suburbsNeeded <= plan.limits.locations) &&
-                (plan.limits.services === null || serviceCount <= plan.limits.services)) && (
-                <button type="button" disabled={busy} onClick={() => void startPlan("trial")} className="w-full rounded-xl border-2 border-[#e7eef5] px-4 py-3 text-sm font-extrabold text-[#10243e] disabled:opacity-50">
-                  {busy ? "Please wait…" : "Start eligible 7-day free trial"}
-                </button>
-              )}
-              <div className="rounded-xl border border-[#e7eef5] p-4">
-                <p className="font-extrabold text-[#10243e]">Eligible free listing</p>
-                <p className="mt-1 text-xs text-[#1d3a5f]/65">
-                  The first Starter listing can be activated without a subscription, within Starter limits ({starterServiceLimit} services and {starterAreaLimit} service {starterAreaLimit === 1 ? "area" : "areas"}). An active plan is required for the paid lead catalogue and credit unlocks.
-                </p>
-                <button
-                  type="button"
-                  disabled={busy || suburbsNeeded > starterAreaLimit || serviceCount > starterServiceLimit}
-                  onClick={() => void continueWithFreeListing()}
-                  className="mt-3 w-full rounded-xl border-2 border-[#e7eef5] px-4 py-3 text-sm font-extrabold text-[#10243e] disabled:opacity-50"
-                >
-                  Continue with free Starter listing →
-                </button>
-                {(suburbsNeeded > starterAreaLimit || serviceCount > starterServiceLimit) && <p className="mt-2 text-[11px] text-red-700">Your selections exceed the Starter listing limits; choose a paid plan.</p>}
-              </div>
               {paymentPending && paymentReference && (
                 <button type="button" disabled={busy} onClick={() => void checkPayment(paymentReference)} className="w-full rounded-xl border-2 border-[#e7eef5] px-4 py-3 text-sm font-bold text-[#10243e] disabled:opacity-50">Check payment confirmation</button>
               )}
@@ -843,6 +853,7 @@ export default function SellerRegistration() {
 
       {user && registrationStep === 7 && (
         <div className="mt-6 space-y-4">
+          <RequiredFieldsLegend />
           <div className="rounded-xl bg-[#f2f6fa] p-4 text-sm text-[#10243e]">
             <p className="font-extrabold">Ready to activate</p>
             <ul className="mt-2 space-y-1 text-[#1d3a5f]/70">
@@ -854,11 +865,11 @@ export default function SellerRegistration() {
             </ul>
           </div>
           <label className="flex items-start gap-2.5 text-xs leading-relaxed text-[#10243e]">
-            <input type="checkbox" checked={listingConsent} onChange={(e) => setListingConsent(e.target.checked)} className="mt-0.5 h-4 w-4 shrink-0 rounded border-[#1d3a5f] text-[#558c2b] focus:ring-[#7ac142]" />
-            <span>I agree to publish my business contact details on my public listing. Buyers will be able to view the business phone and email I provided.</span>
+            <input type="checkbox" required checked={listingConsent} onChange={(e) => setListingConsent(e.target.checked)} className="mt-0.5 h-4 w-4 shrink-0 rounded border-[#1d3a5f] text-[#558c2b] focus:ring-[#7ac142]" />
+            <span><span className="mr-1 font-black text-red-600" aria-hidden="true">*</span>I agree to store my business contact details securely for marketplace enquiries. They will not be shown on public business profiles.</span>
           </label>
-          <button type="button" disabled={busy || !listingConsent} onClick={() => void activateDashboard()} className="btn-hippo w-full text-sm disabled:opacity-50">
-            {busy ? "Activating…" : "Activate seller dashboard →"}
+          <button type="button" disabled={busy} onClick={() => void activateDashboard()} className="btn-hippo w-full text-sm disabled:opacity-50">
+            {busy ? "Activating…" : "Activate seller dashboard "}
           </button>
           <button type="button" disabled={busy} onClick={() => void continueStep(6)} className="w-full text-sm font-bold text-[#558c2b] hover:underline">← Review plan</button>
           <p className="text-center text-xs text-[#1d3a5f]/55">Your dashboard brings together leads, quotes, credits, messages and subscription management.</p>
@@ -872,7 +883,7 @@ function StepButtons({ busy, back, next }: { busy: boolean; back: () => void; ne
   return (
     <div className="flex justify-between gap-3 pt-2">
       <button type="button" disabled={busy} onClick={back} className="rounded-xl border-2 border-[#e7eef5] px-4 py-3 text-sm font-bold text-[#10243e] disabled:opacity-50">← Back</button>
-      <button type="button" disabled={busy} onClick={next} className="btn-hippo text-sm disabled:opacity-50">{busy ? "Saving…" : "Continue →"}</button>
+      <button type="button" disabled={busy} onClick={next} className="btn-hippo text-sm disabled:opacity-50">{busy ? "Saving…" : "Continue "}</button>
     </div>
   );
 }

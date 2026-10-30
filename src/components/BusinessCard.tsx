@@ -1,10 +1,8 @@
 import Link from "next/link";
 import type { Business } from "@/data/businesses";
-import { waLink } from "@/lib/utils";
 import { RatingSummary, Badge } from "./ui";
 import { KIcon, iconForCategory } from "@/lib/icons";
 import { normalizePlanId } from "@/lib/plans";
-import { SITE_SHORT } from "@/lib/site";
 
 /**
  * Directory card for a business.
@@ -23,7 +21,7 @@ export default function BusinessCard({
   suburbName: string;
 }) {
   const plan = normalizePlanId(b.plan);
-  const planLabel = plan === "business" ? "Business sponsored" : plan === "professional" ? "Professional" : null;
+  const planLabel = plan === "premium" ? "Premium" : null;
 
   return (
     <article className="hippo-card flex w-full min-w-0 flex-col gap-3 p-4 hover-lift anim-rise !rounded-2xl">
@@ -74,7 +72,7 @@ export default function BusinessCard({
       <div className="flex min-w-0 flex-col gap-1 text-xs text-[#1d3a5f]/55">
         <span className="flex items-start gap-1.5">
           <KIcon name="mapPin" size={13} className="shrink-0 mt-0.5" />
-          <span className="min-w-0 break-words">{b.address}</span>
+          <span className="min-w-0 break-words">{suburbName}</span>
         </span>
         <span className="flex items-start gap-1.5">
           <KIcon name="clock" size={13} className="shrink-0 mt-0.5" />
@@ -83,27 +81,11 @@ export default function BusinessCard({
       </div>
 
       <div className="mt-auto flex min-w-0 flex-col gap-2 pt-1 sm:flex-row">
-        <a
-          href={`tel:${b.phone.replace(/\s/g, "")}`}
-          className="inline-flex min-w-0 flex-1 items-center justify-center gap-1.5 break-words rounded-xl border-2 border-[#10243e] px-3 py-2.5 text-center text-sm font-extrabold text-[#10243e] transition hover:bg-[#10243e] hover:text-white"
-        >
-          <KIcon name="phone" size={15} /> {b.phone}
-        </a>
-        {b.whatsapp && (
-          <a
-            target="_blank"
-            rel="noreferrer"
-            href={waLink(b.whatsapp, `Hi ${b.name}, I found you on ${SITE_SHORT}. I need help with…`)}
-            className="inline-flex min-w-0 flex-1 items-center justify-center gap-1.5 break-words rounded-xl bg-[#25D366] px-3 py-2.5 text-center text-sm font-extrabold text-white hover:brightness-95"
-          >
-            <KIcon name="message" size={15} /> WhatsApp
-          </a>
-        )}
         <Link
           href={`/request-quote?business=${b.id}`}
           className="inline-flex min-w-0 flex-1 items-center justify-center gap-1.5 break-words rounded-xl bg-[#7ac142] px-3 py-2.5 text-center text-sm font-extrabold text-[#0b1e33] hover:bg-[#68ad35]"
         >
-          <KIcon name="file" size={15} /> Quote
+          <KIcon name="file" size={15} /> Request a quote
         </Link>
       </div>
     </article>

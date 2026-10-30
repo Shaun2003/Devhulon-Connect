@@ -43,11 +43,11 @@ export default function ProfileStrength({
           {nextAction.hint ? ` — ${nextAction.hint}` : ""}{" "}
           {nextAction.action.kind === "tab" && onTab ? (
             <button onClick={() => onTab(nextAction.action.target as never)} className="font-bold text-[#558c2b] hover:underline">
-              {nextAction.action.label} →
+              {nextAction.action.label} 
             </button>
           ) : (
             <Link href={nextAction.action.target} className="font-bold text-[#558c2b] hover:underline">
-              {nextAction.action.label} →
+              {nextAction.action.label} 
             </Link>
           )}
         </p>

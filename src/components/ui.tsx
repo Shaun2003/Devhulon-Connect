@@ -82,6 +82,7 @@ export function PageHero({
   sub,
   crumbs,
   children,
+  align = "left",
 }: {
   /** Small gold uppercase line above the title (e.g. "Home Services · 12 pros"). */
   kicker?: string;
@@ -94,13 +95,16 @@ export function PageHero({
   crumbs?: { label: string; href?: string }[];
   /** Optional extra content under the lede (filters, chips, CTAs). */
   children?: ReactNode;
+  /** Center the hero content for pages whose header is intentionally centered. */
+  align?: "left" | "center";
 }) {
+  const alignment = align === "center" ? "text-center" : "";
   return (
     <div className="hippo-hero text-white">
-      <div className="mx-auto w-full max-w-6xl min-w-0 px-4 pt-6 pb-8 sm:px-6 sm:pt-8 sm:pb-10">
+      <div className={`mx-auto w-full max-w-6xl min-w-0 px-4 pt-6 pb-8 sm:px-6 sm:pt-8 sm:pb-10 ${alignment}`}>
         {crumbs && crumbs.length > 0 && (
           <nav aria-label="Breadcrumb" className="min-w-0 text-xs font-bold text-white/60">
-            <ol className="flex items-center gap-1.5 flex-wrap">
+            <ol className={`flex items-center gap-1.5 flex-wrap ${align === "center" ? "justify-center" : ""}`}>
               {crumbs.map((c, i) => (
                 <li key={c.label + i} className="flex items-center gap-1.5">
                   {c.href ? (
@@ -129,7 +133,7 @@ export function PageHero({
           </p>
         )}
         <h1 className="mt-2 break-words text-3xl font-black tracking-tight sm:text-4xl">{title}</h1>
-        {sub && <p className="mt-2 max-w-2xl break-words text-sm text-white/75 sm:text-base">{sub}</p>}
+        {sub && <p className={`mt-2 max-w-2xl break-words text-sm text-white/75 sm:text-base ${align === "center" ? "mx-auto" : ""}`}>{sub}</p>}
 
         {children && <div className="mt-4 min-w-0">{children}</div>}
       </div>
@@ -194,7 +198,7 @@ export function SectionTitle({ kicker, title, sub, link, linkLabel }: { kicker?:
         <h2 className="text-xl sm:text-2xl font-black text-[#10243e] tracking-tight">{title}</h2>
         {sub && <p className="text-sm text-[#1d3a5f]/70 mt-1 max-w-2xl">{sub}</p>}
       </div>
-      {link && <Link href={link} className="text-sm font-bold text-[#10243e] link-underline hover:text-[#558c2b] shrink-0 pb-0.5 self-start sm:self-auto">{linkLabel ?? "View all →"}</Link>}
+      {link && <Link href={link} className="text-sm font-bold text-[#10243e] link-underline hover:text-[#558c2b] shrink-0 pb-0.5 self-start sm:self-auto">{linkLabel ?? "View all "}</Link>}
     </div>
   );
 }

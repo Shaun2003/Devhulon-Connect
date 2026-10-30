@@ -3,7 +3,7 @@
 /**
  * Admin console → Plans (§21).
  *
- * Prices, limits, trial length and marketing copy live in `subscription_plans`,
+ * Prices, limits and marketing copy live in `subscription_plans`,
  * merged over the built-in defaults in `lib/plans.ts`. That matters for more than
  * display: checkout, entitlement and every feature gate read the SAME merged
  * config on the server, so editing a price here changes what customers are
@@ -43,7 +43,6 @@ type Draft = {
   blurb: string;
   monthly: string;
   annual: string;
-  trialDays: string;
   popular: boolean;
   active: boolean;
   limits: Record<LimitKey, string>;
@@ -60,7 +59,6 @@ function toDraft(p: PlanConfig, active: boolean): Draft {
     blurb: p.blurb,
     monthly: String(p.monthly),
     annual: String(p.annual),
-    trialDays: p.trialDays === undefined ? "" : String(p.trialDays),
     popular: p.popular === true,
     active,
     limits: {
@@ -92,9 +90,6 @@ function parseMoney(v: string): number | undefined {
  * Build the override payload. Returns a string when the draft is invalid, so the
  * caller can show one clear message instead of a silent no-op.
  *
- * Trial days are omitted (not blanked) when the field is empty: the API treats a
- * missing key as "leave as-is", while clearing it would remove the trial from an
- * existing plan.
  */
 function toPayload(id: PlanId, d: Draft): Record<string, unknown> | string {
   const name = d.name.trim();
@@ -112,10 +107,6 @@ function toPayload(id: PlanId, d: Draft): Record<string, unknown> | string {
     limits[f.key] = v;
   }
 
-  const trialRaw = d.trialDays.trim();
-  const trialDays = trialRaw === "" ? undefined : parseMoney(trialRaw);
-  if (trialRaw !== "" && trialDays === undefined) return "Trial days must be a number of 0 or more.";
-
   return {
     planId: id,
     name,
@@ -125,7 +116,6 @@ function toPayload(id: PlanId, d: Draft): Record<string, unknown> | string {
     popular: d.popular,
     active: d.active,
     limits,
-    ...(trialDays === undefined ? {} : { trialDays }),
     features: d.features
       .split("\n")
       .map((f) => f.trim())
@@ -133,19 +123,24 @@ function toPayload(id: PlanId, d: Draft): Record<string, unknown> | string {
   };
 }
 
-async function authedFetch(path: string, init?: { method?: string; body?: unknown }) {
-  const token = await auth?.currentUser?.getIdToken();
+async function authedFetch(
+  path: string,
+  init: { method?: string; body?: unknown } = {},
+) {
+  const user = auth?.currentUser;
+  if (!user) throw new Error("Sign in as an admin first.");
+  const token = await user.getIdToken();
   if (!token) throw new Error("Sign in as an admin first.");
   const res = await fetch(path, {
-    method: init?.method ?? "GET",
+    method: init.method || "GET",
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-    body: init?.body === undefined ? undefined : JSON.stringify(init.body),
+    body: init.body === undefined ? undefined : JSON.stringify(init.body),
     cache: "no-store",
   });
   const json = (await res.json().catch(() => ({}))) as {
-    ok?: boolean;
-    error?: string;
-    plans?: Snapshot[];
+    ok: boolean;
+    error: string;
+    plans: Snapshot[];
   };
   if (!res.ok || json.ok !== true) throw new Error(json.error ?? "Request failed. Please try again.");
   return json;
@@ -213,7 +208,7 @@ export default function PlansAdmin() {
   }
 
   async function reset(s: Snapshot) {
-    if (!confirm(`Reset ${s.effective.name} to the built-in defaults (R${s.defaults.monthly}/mo)?`)) return;
+    if (!confirm(`Reset ${s.effective.name} to the built-in defaults (R${s.defaults.monthly}/mo)`)) return;
     setBusy(s.id);
     setError(null);
     setNotice(null);
@@ -304,12 +299,6 @@ export default function PlansAdmin() {
                 value={d.annual}
                 onChange={(v) => patch(s.id, { annual: v })}
                 hint={`Default R${s.defaults.annual}`}
-              />
-              <Field
-                label="Trial days"
-                value={d.trialDays}
-                onChange={(v) => patch(s.id, { trialDays: v })}
-                hint="Blank = no trial"
               />
             </div>
 

@@ -159,7 +159,7 @@ export default function PortfolioPanel({
         <div className="flex items-center gap-2 text-xs font-extrabold text-[#10243e]">
           <KIcon name="camera" size={14} />
           {cap.limit === null ? (
-            <span>Unlimited portfolio on the Business plan ({cap.used} used)</span>
+            <span>Unlimited portfolio on Premium ({cap.used} used)</span>
           ) : (
             <span>
               {cap.used} of {cap.limit} portfolio items used
@@ -181,9 +181,9 @@ export default function PortfolioPanel({
         <div className="rounded-xl border-2 border-[#e7eef5] p-4 text-sm">
           <p className="font-bold text-[#10243e]">You&apos;ve used every portfolio slot on this plan.</p>
           <p className="text-xs text-[#1d3a5f]/70 mt-1">
-            Edit or delete an item below, or upgrade: Professional holds 50 items, Business is unlimited.
+            Edit or delete an item below, or upgrade to Premium for unlimited portfolio space.
           </p>
-          <Link href="/advertise" className="btn-sun text-sm mt-3 inline-flex">See plans →</Link>
+          <Link href="/pricing" className="btn-sun text-sm mt-3 inline-flex">See plans </Link>
         </div>
       ) : (
         <button
@@ -288,7 +288,7 @@ export default function PortfolioPanel({
 
           <div className="flex flex-wrap items-center gap-2">
             <button disabled={busy} className="btn-hippo text-sm disabled:opacity-60">
-              {busy ? "Saving…" : editing ? "Save changes" : "Add work sample →"}
+              {busy ? "Saving…" : editing ? "Save changes" : "Add work sample "}
             </button>
             <button
               type="button"

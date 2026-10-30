@@ -5,6 +5,8 @@ import { useAuth } from "@/components/AuthProvider";
 import { DashboardSkeleton } from "@/components/dash/parts";
 import BuyerDashboard from "@/components/dash/BuyerDashboard";
 import SellerDashboard from "@/components/dash/SellerDashboard";
+import AccountSettings from "@/components/dash/AccountSettings";
+import { PageHero } from "@/components/ui";
 import { verifyCheckout } from "@/lib/monetize";
 
 /** Routes /dashboard to the buyer or seller hub based on the realtime role. */
@@ -15,9 +17,9 @@ export function DashboardRouter({
 }: {
   billingReturn?: boolean;
   reference?: string;
-  initialSellerTab?: "leads" | "marketplace";
+  initialSellerTab?: "leads" | "marketplace" | "settings";
 }) {
-  const { role, user, loading } = useAuth();
+  const { role, user, loading, roleLoading, sellerAccountReady, sellerAccountLoading } = useAuth();
   const [verificationAttempt, setVerificationAttempt] = useState(0);
   const [paymentStatus, setPaymentStatus] = useState<"idle" | "confirmed" | "pending" | "error">("idle");
   const [paymentMessage, setPaymentMessage] = useState("");
@@ -55,7 +57,7 @@ export function DashboardRouter({
     return () => { active = false; };
   }, [billingReturn, reference, loading, user?.uid, verificationAttempt]);
 
-  if (loading) return <DashboardSkeleton />;
+  if (loading || roleLoading || (role === "seller" && sellerAccountLoading)) return <DashboardSkeleton />;
   return (
     <>
       {billingReturn && (
@@ -82,7 +84,18 @@ export function DashboardRouter({
           </div>
         </div>
       )}
-      {role === "seller" ? <SellerDashboard key={initialSellerTab ?? "default"} initialTab={initialSellerTab} /> : <BuyerDashboard />}
+      {role === "seller" && !sellerAccountReady && initialSellerTab === "settings"
+        ? (
+          <div className="min-h-screen">
+            <PageHero kicker="Account" title="Account settings" />
+            <main className="mx-auto w-full max-w-6xl px-4 py-8 sm:px-6">
+              <AccountSettings />
+            </main>
+          </div>
+        )
+        : role === "seller" && sellerAccountReady
+        ? <SellerDashboard key={initialSellerTab ?? "default"} initialTab={initialSellerTab} />
+        : <BuyerDashboard key={initialSellerTab === "settings" ? "settings" : "overview"} initialSection={initialSellerTab === "settings" ? "settings" : "overview"} />}
     </>
   );
 }

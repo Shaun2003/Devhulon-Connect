@@ -1,19 +1,32 @@
 "use client";
 import { KIcon, type IconKey } from "@/lib/icons";
-import { Stars } from "@/components/ui";
+import { PageHero, Stars } from "@/components/ui";
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useAuth } from "@/components/AuthProvider";
 import { useSavedItems } from "@/components/SavedItemsProvider";
 import { useRealtime, subscribeSavedItems, subscribeLeadsByRequester, subscribeReviewsByReviewer, subscribeSavedSearches, subscribeTopBusinesses, subscribeQuotesForBuyer, subscribeBookingsByBuyer, SAVED_ITEMS_LIMIT } from "@/lib/realtime";
-import { deleteSavedSearch, buyerCancelBooking, unsave } from "@/lib/repo";
+import { deleteSavedSearch, buyerCancelBooking, hideBuyerDashboardItem, unsave } from "@/lib/repo";
 import { waLink } from "@/lib/utils";
 import { DashboardSkeleton, Panel, EmptyLine, ErrorNote, SignInInline } from "@/components/dash/parts";
 import PrivacyPanel from "@/components/dash/PrivacyPanel";
+import AccountSettings from "@/components/dash/AccountSettings";
 import { SITE_SHORT } from "@/lib/site";
 import { greetingFor } from "@/lib/utils";
 
 type Row = Record<string, unknown>;
+type BuyerSection =
+  | "saved-businesses"
+  | "saved-posts"
+  | "requests"
+  | "quotes"
+  | "bookings"
+  | "reviews"
+  | "searches"
+  | "saved-items"
+  | "privacy"
+  | "business"
+  | "settings";
 
 /** Filter chips for the saved list — mirrors SaveButton's SaveType union. */
 const SAVED_FILTERS: ReadonlyArray<readonly [string, string]> = [
@@ -29,8 +42,9 @@ const SAVED_FILTERS: ReadonlyArray<readonly [string, string]> = [
  * Buyer hub: saved businesses, quote requests, own reviews — all realtime.
  * Browsing KASI is public; this dashboard needs a (free) account.
  */
-export default function BuyerDashboard() {
-  const { user, role, loading } = useAuth();
+export default function BuyerDashboard({ initialSection = "saved-businesses" }: { initialSection?: BuyerSection | "overview" }) {
+  const { user, profileName, role, loading, roleLoading, sellerAccountReady } = useAuth();
+  const [section, setSection] = useState<BuyerSection>(initialSection === "overview" ? "saved-businesses" : initialSection);
   const uid = user?.uid ?? "";
 
   // Saved BUSINESSES live in `saved_items` (itemType "business") — the same
@@ -50,17 +64,42 @@ export default function BuyerDashboard() {
   const searches = useRealtime<Row>((cb, onErr) => (uid ? subscribeSavedSearches(uid, cb as never, onErr) : () => {}), [], [uid]);
   const allBiz = useRealtime<Row>((cb, onErr) => subscribeTopBusinesses(cb as never, onErr), [], []);
   const quotes = useRealtime<Row>((cb, onErr) => (uid ? subscribeQuotesForBuyer(uid, cb as never, onErr) : () => {}), [], [uid]);
-  const allLeads = leads.rows;
+  const allLeads = useMemo(() => {
+    const requests = new Map<string, Row>();
+    for (const lead of leads.rows) {
+      const requestId = String(lead.requestId ?? lead.id ?? "");
+      if (!requestId) continue;
+      const current = requests.get(requestId);
+      if (!current || String(lead.id ?? "") === requestId) requests.set(requestId, lead);
+    }
+    return [...requests.values()];
+  }, [leads.rows]);
   const allQuotes = quotes.rows;
   const bookings = useRealtime<Row>((cb, onErr) => (uid ? subscribeBookingsByBuyer(uid, cb as never, onErr) : () => {}), [], [uid]);
   // Reads the one app-wide listener from SavedItemsProvider — the dashboard does
   // not open a second identical query for the same data.
   const saved = useSavedItems();
   const [savedFilter, setSavedFilter] = useState("");
+  const [deletingItem, setDeletingItem] = useState<string | null>(null);
+  const [pendingRemoval, setPendingRemoval] = useState<string | null>(null);
+  const [removalError, setRemovalError] = useState<{ key: string; message: string } | null>(null);
   const savedRows = useMemo(
     () => (savedFilter === "" ? saved.rows : saved.rows.filter((r) => String(r.itemType ?? "") === savedFilter)),
     [saved.rows, savedFilter]
   );
+  const dashboardTabs: { id: BuyerSection; label: string; icon: IconKey; count?: number }[] = [
+    { id: "saved-businesses", label: "Businesses", icon: "building", count: favs.rows.length },
+    { id: "saved-posts", label: "Saved posts", icon: "layers", count: savedJobs.length },
+    { id: "requests", label: "Quote requests", icon: "message", count: allLeads.length },
+    { id: "quotes", label: "Quotes received", icon: "file", count: allQuotes.length },
+    { id: "bookings", label: "Bookings", icon: "calendar", count: bookings.rows.length },
+    { id: "reviews", label: "Reviews", icon: "star", count: reviews.rows.length },
+    { id: "searches", label: "Saved searches", icon: "bell", count: searches.rows.length },
+    { id: "saved-items", label: "Saved items", icon: "heart", count: saved.rows.length },
+    { id: "privacy", label: "Privacy & data", icon: "lock" },
+    { id: "business", label: "Business", icon: "building" },
+    { id: "settings", label: "Settings", icon: "settings" },
+  ];
 
   function itemLabel(type: string): string {
     return ({ deal: "Deal", event: "Event", place: "Place", guide: "Guide", job: "Job" } as Record<string, string>)[type] ?? type;
@@ -100,8 +139,88 @@ export default function BuyerDashboard() {
     }
   }
 
+  function askToRemove(type: "request" | "quote", id: string) {
+    const key = `${type}:${id}`;
+    setPendingRemoval(key);
+    setRemovalError(null);
+  }
 
-  if (loading) return <DashboardSkeleton title={`Loading your ${SITE_SHORT}`} />;
+  async function removeDashboardItem(type: "request" | "quote", id: string) {
+    const key = `${type}:${id}`;
+    setDeletingItem(key);
+    try {
+      await hideBuyerDashboardItem(type, id);
+      setPendingRemoval(null);
+      setRemovalError(null);
+    } catch (error) {
+      setRemovalError({
+        key,
+        message: error instanceof Error ? error.message : "Could not remove this item.",
+      });
+    } finally {
+      setDeletingItem(null);
+    }
+  }
+
+  function removalControl(type: "request" | "quote", id: string, label: string) {
+    const key = `${type}:${id}`;
+    if (pendingRemoval !== key) {
+      return (
+        <button
+          type="button"
+          onClick={() => askToRemove(type, id)}
+          aria-label={`Remove ${label} from your dashboard`}
+          className="shrink-0 text-xs font-bold text-red-700 hover:underline"
+        >
+          Remove
+        </button>
+      );
+    }
+
+    return (
+      <div className="flex flex-wrap items-center justify-end gap-2 sm:basis-full" role="group" aria-label={`Confirm removal of ${label}`}>
+        <span className="text-xs text-[#1d3a5f]/70">Remove from your dashboard? Seller records stay unchanged.</span>
+        <button
+          type="button"
+          disabled={deletingItem === key}
+          onClick={() => void removeDashboardItem(type, id)}
+          className="rounded-lg bg-red-700 px-3 py-1.5 text-xs font-bold text-white hover:bg-red-800 disabled:opacity-50"
+        >
+          {deletingItem === key ? "Removing…" : "Confirm"}
+        </button>
+        <button
+          type="button"
+          disabled={deletingItem === key}
+          onClick={() => {
+            setPendingRemoval(null);
+            setRemovalError(null);
+          }}
+          className="text-xs font-bold text-[#10243e] hover:underline disabled:opacity-50"
+        >
+          Cancel
+        </button>
+        {removalError?.key === key && <p className="basis-full text-right text-xs font-bold text-red-700" role="alert">{removalError.message}</p>}
+      </div>
+    );
+  }
+
+  function displayDate(value: unknown): string | null {
+    let date: Date;
+    if (value instanceof Date) {
+      date = value;
+    } else if (typeof value === "object" && value !== null && "toDate" in value && typeof value.toDate === "function") {
+      date = value.toDate();
+    } else if (typeof value === "string" || typeof value === "number") {
+      date = new Date(value);
+    } else {
+      return null;
+    }
+    if (!Number.isFinite(date.getTime())) return null;
+    return new Intl.DateTimeFormat("en-ZA", { dateStyle: "medium", timeZone: "Africa/Johannesburg" }).format(date);
+  }
+
+
+  if (loading || roleLoading) return <DashboardSkeleton title={`Loading your ${SITE_SHORT}`} />;
 
   if (!user || !uid) {
     return (
@@ -115,13 +234,32 @@ export default function BuyerDashboard() {
   }
 
   return (
-    <div className="mx-auto w-full max-w-6xl min-w-0 px-4 py-6 space-y-5 sm:px-6 sm:py-8">
-      <header>
-        <p className="text-xs font-extrabold uppercase tracking-[0.16em] text-[#558c2b]">Buyer dashboard</p>
-        <h1 className="text-2xl sm:text-3xl font-black text-[#10243e] break-words">{greetingFor()}, {user.displayName ?? "neighbour"} <KIcon name="hand" size={14} className="inline shrink-0" /></h1>
-      </header>
-
-      <div className="grid min-w-0 gap-4 sm:grid-cols-2">
+    <>
+      <PageHero kicker="Buyer dashboard" title={`${greetingFor()}, ${profileName || user.displayName || "neighbour"}`}>
+        <nav className="scroll-x -mx-1 mt-4 px-1" aria-label="Buyer dashboard sections">
+          {dashboardTabs.map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => setSection(tab.id)}
+              aria-current={section === tab.id ? "page" : undefined}
+              className={`mr-2 inline-flex items-center gap-1.5 whitespace-nowrap rounded-full px-3.5 py-2 text-sm font-bold transition ${section === tab.id ? "hippo-tab-active" : "border border-white/25 bg-white/10 text-white hover:bg-white/20"}`}
+            >
+              <KIcon name={tab.icon} size={14} className="shrink-0" />
+              {tab.label}
+              {tab.count !== undefined && (
+                <span className={`rounded-full px-1.5 py-0.5 text-[11px] font-black leading-none ${section === tab.id ? "bg-black/15" : "bg-white/15"}`}>
+                  {tab.count}
+                </span>
+              )}
+            </button>
+          ))}
+        </nav>
+      </PageHero>
+      <div className="mx-auto w-full max-w-6xl min-w-0 px-4 py-6 space-y-5 sm:px-6 sm:py-8">
+      {section === "settings" && <AccountSettings />}
+      {section !== "settings" && <div className="grid min-w-0 gap-4 sm:grid-cols-2">
+        {section === "saved-businesses" && (
         <Panel title="Saved businesses" count={favs.rows.length} live={favs.live} loading={!favs.live && !favs.error}>
           <ErrorNote error={favs.error} />
           {favs.rows.length === 0 ? (
@@ -142,11 +280,14 @@ export default function BuyerDashboard() {
             ))
           )}
         </Panel>
+        )}
 
-        {(savedJobs.length > 0 || (!savedAll.live && !savedAll.error)) && (
+        {section === "saved-posts" && (
           <Panel title="Saved jobs, events, deals & guides" count={savedJobs.length} live={savedAll.live} loading={!savedAll.live && !savedAll.error}>
             <ErrorNote error={savedAll.error} />
-            {savedJobs.map((s, i) => (
+            {savedJobs.length === 0 ? (
+              <EmptyLine what="No saved posts yet." ctaHref="/jobs" ctaLabel="Explore posts" />
+            ) : savedJobs.map((s, i) => (
               <div key={String(s.id ?? i)} className="flex items-center justify-between gap-2 rounded-xl border border-[#e7eef5] p-3">
                 <span className="min-w-0">
                   <span className="text-[10px] font-black uppercase tracking-widest text-[#558c2b] block">{String(s.itemType ?? "")}</span>
@@ -163,6 +304,7 @@ export default function BuyerDashboard() {
           </Panel>
         )}
 
+        {section === "requests" && (
         <Panel title="My quote requests" count={allLeads.length} live={leads.live} loading={!leads.live && !leads.error}>
           <ErrorNote error={leads.error} />
           {allLeads.length === 0 ? (
@@ -174,7 +316,10 @@ export default function BuyerDashboard() {
               const wa = String(l.acceptedWhatsapp ?? "");
               return (
                 <div key={String(l.id ?? i)} className="rounded-xl border border-[#e7eef5] p-3">
-                  <p className="text-sm font-bold text-[#10243e]">{String(l.need ?? "Quote request")}</p>
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <p className="min-w-0 flex-1 break-words text-sm font-bold text-[#10243e]">{String(l.need ?? "Quote request")}</p>
+                    {removalControl("request", String(l.id ?? ""), "quote request")}
+                  </div>
                   <p className="text-xs text-[#1d3a5f]/60 mt-0.5">
                     {String(l.suburb ?? "")} · {String(l.businessName ?? "Broadcast to locals")} ·{" "}
                     <b className={st === "accepted" ? "text-[#3c6b1d]" : st === "declined" ? "text-red-700" : "text-[#a36508]"}>{st}</b>
@@ -194,7 +339,7 @@ export default function BuyerDashboard() {
                     </div>
                   )}
                   {st === "declined" && (
-                    <p className="text-xs text-[#1d3a5f]/60 mt-2">Declined — no contact details shared. <Link href="/request-quote" className="font-bold text-[#558c2b] hover:underline">Request quotes from other locals →</Link></p>
+                    <p className="text-xs text-[#1d3a5f]/60 mt-2">Declined — no contact details shared. <Link href="/request-quote" className="font-bold text-[#558c2b] hover:underline">Request quotes from other locals </Link></p>
                   )}
                   {st === "new" && <p className="text-xs text-[#a36508] mt-2">Waiting for replies — businesses in your area see this request live.</p>}
                 </div>
@@ -202,7 +347,9 @@ export default function BuyerDashboard() {
             })
           )}
         </Panel>
+        )}
 
+        {section === "quotes" && (
         <Panel title="Quotes received" count={allQuotes.length} live={quotes.live} loading={!quotes.live && !quotes.error}>
           <ErrorNote error={quotes.error} />
           {allQuotes.length === 0 ? (
@@ -217,24 +364,25 @@ export default function BuyerDashboard() {
                 const seller = allBiz.rows.find((b) => String(b.ownerUid ?? "") === String(q.sellerUid ?? ""));
                 const st = String(q.status ?? "sent");
                 return (
-                  <Link
-                    key={String(q.id ?? i)}
-                    href={`/compare-quotes?lead=${String(q.leadId ?? "")}`}
-                    className="flex flex-wrap items-center gap-2 rounded-xl border border-[#e7eef5] p-3 hover:border-[#7ac142] transition"
-                  >
-                    <b className="text-sm text-[#10243e]">R{Number(q.price ?? 0).toLocaleString("en-ZA")}</b>
-                    <span className="text-xs text-[#1d3a5f]/70">{String(seller?.name ?? "Local business")}</span>
-                    <span className={`ml-auto text-[10px] font-black uppercase rounded-full px-2 py-0.5 ${st === "accepted" ? "bg-[#e8f6d8] text-[#3c6b1d]" : st === "declined" ? "bg-[#f2f6fa] text-[#1d3a5f]/70" : "bg-[#fff4d6] text-[#a36508]"}`}>
-                      {st === "sent" ? "Awaiting your decision" : st}
-                    </span>
-                  </Link>
+                  <div key={String(q.id ?? i)} className="flex flex-wrap items-center gap-2 rounded-xl border border-[#e7eef5] p-3 hover:border-[#7ac142] transition">
+                    <Link href={`/compare-quotes?lead=${String(q.leadId ?? "")}`} className="flex min-w-0 flex-1 flex-wrap items-center gap-2 hover:underline">
+                      <b className="text-sm text-[#10243e]">R{Number(q.price ?? 0).toLocaleString("en-ZA")}</b>
+                      <span className="text-xs text-[#1d3a5f]/70">{String(seller?.name ?? "Local business")}</span>
+                      <span className={`text-[10px] font-black uppercase rounded-full px-2 py-0.5 ${st === "accepted" ? "bg-[#e8f6d8] text-[#3c6b1d]" : st === "declined" ? "bg-[#f2f6fa] text-[#1d3a5f]/70" : "bg-[#fff4d6] text-[#a36508]"}`}>
+                        {st === "sent" ? "Awaiting your decision" : st}
+                      </span>
+                    </Link>
+                    {removalControl("quote", String(q.id ?? ""), "received quote")}
+                  </div>
                 );
               })}
-              <Link href="/compare-quotes" className="btn-hippo text-sm w-fit">Compare all quotes →</Link>
+              <Link href="/compare-quotes" className="btn-hippo text-sm w-fit">Compare all quotes </Link>
             </>
           )}
         </Panel>
+        )}
 
+        {section === "bookings" && (
         <Panel title="My bookings" count={bookings.rows.length} live={bookings.live} loading={!bookings.live && !bookings.error}>
           <ErrorNote error={bookings.error} />
           {bookings.rows.length === 0 ? (
@@ -251,8 +399,17 @@ export default function BuyerDashboard() {
               return (
                 <div key={id} className="rounded-xl border border-[#e7eef5] p-3">
                   <div className="flex flex-wrap items-center gap-2">
-                    <b className="text-sm text-[#10243e]">{String(bk.businessName ?? "Business")}</b>
-                    <span className="text-xs text-[#1d3a5f]/70">{String(bk.date ?? "")} · {String(bk.time ?? "")}</span>
+                    {bk.businessId ? (
+                      <Link href={`/business/${String(bk.businessId)}`} className="text-sm font-bold text-[#10243e] hover:text-[#558c2b] hover:underline">
+                        {String(bk.businessName ?? "Business")}
+                      </Link>
+                    ) : (
+                      <b className="text-sm text-[#10243e]">{String(bk.businessName ?? "Business")}</b>
+                    )}
+                    <span className="text-xs text-[#1d3a5f]/70">
+                      {String(bk.date ?? "")} · {String(bk.time ?? "")}
+                      {Number(bk.durationHours) > 0 ? ` · ${Number(bk.durationHours)} hour${Number(bk.durationHours) === 1 ? "" : "s"}` : ""}
+                    </span>
                     <span className={`ml-auto text-[10px] font-black uppercase rounded-full px-2 py-0.5 ${
                       st === "confirmed" ? "bg-[#e8f6d8] text-[#3c6b1d]" :
                       st === "completed" ? "bg-[#10243e] text-[#ffc72c]" :
@@ -260,7 +417,10 @@ export default function BuyerDashboard() {
                       "bg-[#fff4d6] text-[#a36508]"
                     }`}>{st}</span>
                   </div>
-                  {String(bk.note ?? "") && <p className="text-xs text-[#1d3a5f]/70 mt-1">{String(bk.note)}</p>}
+                  {displayDate(bk.createdAt) && <p className="mt-1 text-[11px] text-[#1d3a5f]/50">Requested {displayDate(bk.createdAt)}</p>}
+                  {String(bk.note ?? "") && <p className="mt-2 whitespace-pre-wrap break-words text-sm text-[#1d3a5f]/75">{String(bk.note)}</p>}
+                  {String(bk.buyerNote ?? "") && <p className="mt-1 whitespace-pre-wrap break-words text-xs text-[#1d3a5f]/70"><b>Your note:</b> {String(bk.buyerNote)}</p>}
+                  {String(bk.sellerNote ?? "") && <p className="mt-1 whitespace-pre-wrap break-words text-xs text-[#1d3a5f]/70"><b>Business update:</b> {String(bk.sellerNote)}</p>}
                   {live && (
                     <button
                       onClick={() => {
@@ -278,7 +438,9 @@ export default function BuyerDashboard() {
             })
           )}
         </Panel>
+        )}
 
+        {section === "reviews" && (
         <Panel title="My reviews" count={reviews.rows.length} live={reviews.live} loading={!reviews.live && !reviews.error}>
           <ErrorNote error={reviews.error} />
           {reviews.rows.length === 0 ? (
@@ -286,22 +448,36 @@ export default function BuyerDashboard() {
           ) : (
             reviews.rows.map((r, i) => (
               <div key={String(r.id ?? i)} className="rounded-xl border border-[#e7eef5] p-3">
-                <p className="text-sm text-[#10243e] flex items-start gap-1.5">
-              <Stars value={Number(r.rating ?? 0)} size={13} />
-              <span>{String(r.body ?? "").slice(0, 80)}…</span>
-            </p>
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                  <Stars value={Number(r.rating ?? 0)} size={13} />
+                  {r.businessId ? (
+                    <Link href={`/business/${String(r.businessId)}`} className="text-xs text-[#1d3a5f]/70 hover:text-[#558c2b] hover:underline">
+                      {String(allBiz.rows.find((business) => String(business.id ?? "") === String(r.businessId ?? ""))?.name ?? "Business")}
+                    </Link>
+                  ) : <span className="text-xs text-[#1d3a5f]/70">Business</span>}
+                  {r.hasBooking === true && <span className="text-[10px] font-bold text-[#3c6b1d]">Verified booking</span>}
+                  {displayDate(r.createdAt) && <span className="ml-auto text-[11px] text-[#1d3a5f]/50">{displayDate(r.createdAt)}</span>}
+                </div>
+                <p className="mt-2 whitespace-pre-wrap break-words text-sm text-[#10243e]">{String(r.body ?? "")}</p>
+                {String(r.reply ?? "").trim() && (
+                  <div className="mt-3 rounded-lg bg-[#f2f6fa] p-3">
+                    <p className="text-[10px] font-black uppercase tracking-wide text-[#558c2b]">Business response</p>
+                    <p className="mt-1 whitespace-pre-wrap break-words text-sm text-[#1d3a5f]/80">{String(r.reply)}</p>
+                  </div>
+                )}
               </div>
             ))
           )}
         </Panel>
+        )}
 
         {/* POPIA: the privacy policy promises a user can erase their own data
             without emailing anyone. This is where they actually do it. */}
-        <div className="sm:col-span-2">
+        {section === "privacy" && <div className="sm:col-span-2">
           <PrivacyPanel />
-        </div>
+        </div>}
 
-        <section className="hippo-card min-w-0 p-4 sm:col-span-2 sm:p-5">
+        {section === "searches" && <section className="hippo-card min-w-0 p-4 sm:col-span-2 sm:p-5">
           <h2 className="font-black text-[#10243e]">Saved searches {searches.live && <span className="chip-live ml-1">Live</span>}</h2>
           { !searches.live && !searches.error ? (
             <div className="mt-4 space-y-3" role="status" aria-label="Loading saved searches">
@@ -323,16 +499,16 @@ export default function BuyerDashboard() {
                     <span className={`text-xs font-black rounded-full px-2 py-0.5 ${matches > 0 ? "bg-[#e8f6d8] text-[#3c6b1d]" : "bg-[#f2f6fa] text-[#1d3a5f]/60"}`}>
                       {matches} live {matches === 1 ? "listing" : "listings"}
                     </span>
-                    <Link href={`/${cty}/${sub}/${cat}`} className="text-xs font-bold text-[#558c2b] hover:underline ml-auto">Open →</Link>
+                    <Link href={`/${cty}/${sub}/${cat}`} className="text-xs font-bold text-[#558c2b] hover:underline ml-auto">Open </Link>
                     <button onClick={() => deleteSavedSearch(String(s.id)).catch(() => {})} className="text-xs font-bold text-red-700 hover:underline">Remove</button>
                   </div>
                 );
               })
             )}
           </div>}
-        </section>
+        </section>}
 
-        <section id="saved" className="hippo-card min-w-0 p-4 sm:col-span-2 sm:p-5 mb-4 scroll-mt-28">
+        {section === "saved-items" && <section id="saved" className="hippo-card min-w-0 p-4 sm:col-span-2 sm:p-5 mb-4 scroll-mt-28">
           <h2 className="font-black text-[#10243e]">
             Saved items{saved.rows.length > 0 ? ` (${saved.rows.length})` : ""} {saved.live && <span className="chip-live ml-1">Live</span>}
           </h2>
@@ -391,7 +567,7 @@ export default function BuyerDashboard() {
                       <div className="min-w-0 flex-1">
                         <b className="text-sm font-bold text-[#10243e]">{String(s.title ?? t)}</b>
                         <p className="text-xs text-[#1d3a5f]/60 mt-0.5">{itemLabel(t)}</p>
-                        <a href={itemHref(s, t)} className="text-xs font-bold text-[#558c2b] hover:underline mt-1 inline-block">View →</a>
+                        <a href={itemHref(s, t)} className="text-xs font-bold text-[#558c2b] hover:underline mt-1 inline-block">View </a>
                       </div>
                       <button onClick={() => unsave(t, iid).catch(() => {})} className="text-xs font-bold text-red-700 hover:underline shrink-0">Remove</button>
                     </div>
@@ -402,19 +578,22 @@ export default function BuyerDashboard() {
           </div>
             </>
           )}
-        </section>
+        </section>}
 
-        <section className="hippo-card p-5 bg-[#f3f9ec]">
+        {section === "business" && <section className="hippo-card p-5 bg-[#f3f9ec]">
           <h2 className="font-black text-[#10243e]">Own a business?</h2>
           <p className="text-sm text-[#1d3a5f]/70 mt-1">Switch to a seller account to list your business, get leads and manage a plan. Free to start.</p>
-          {role === "seller" ? (
-            <Link href="/dashboard" className="btn-hippo text-sm mt-3">Open seller hub →</Link>
+          {role === "seller" && sellerAccountReady ? (
+            <Link href="/dashboard" className="btn-hippo text-sm mt-3">Open seller hub </Link>
+          ) : role === "seller" ? (
+            <Link href="/register-seller" className="btn-hippo text-sm mt-3 inline-flex">Complete seller setup</Link>
           ) : (
-            <Link href="/register-seller" className="btn-hippo text-sm mt-3 inline-flex">Become a seller →</Link>
+            <Link href="/register-seller" className="btn-hippo text-sm mt-3 inline-flex">Become a seller </Link>
           )}
-        </section>
+        </section>}
+      </div>}
       </div>
-    </div>
+    </>
   );
 
 }

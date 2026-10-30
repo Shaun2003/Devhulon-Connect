@@ -14,27 +14,29 @@ import LeadMarketplace from "@/components/dash/LeadMarketplace";
 import TeamManagement from "@/components/dash/TeamManagement";
 import SupportPanel from "@/components/dash/SupportPanel";
 import VerificationRequest from "@/components/dash/VerificationRequest";
+import AccountSettings from "@/components/dash/AccountSettings";
 import { BOOKING_STATUS_LABEL, BOOKING_STATUS_TONE, bookingWhen, normalizeBookingStatus } from "@/lib/bookings";
 import QuoteComposer from "@/components/quotes/QuoteComposer";
 import { QUOTE_STATUS_LABEL, QUOTE_STATUS_TONE, normalizeQuoteStatus } from "@/lib/quotes";
-import { formatZAR, hasCap, limitsFor, subscriptionIsEntitled } from "@/lib/plans";
+import { formatZAR, hasCap, limitsFor, normalizePlanId, subscriptionIsEntitled } from "@/lib/plans";
 import { creditPriceFor } from "@/lib/credits";
 import { SITE_SHORT } from "@/lib/site";
 import { greetingFor } from "@/lib/utils";
+import { PageHero } from "@/components/ui";
 
 type Row = Record<string, unknown>;
 const hasLeadUnlock = (lead: Row, unlockIds: ReadonlySet<string>) =>
   unlockIds.has(String(lead.id ?? "")) || unlockIds.has(String(lead.requestId ?? ""));
-const tabs = ["listings", "leads", "bookings", "marketplace", "quotes", "analytics", "portfolio", "areas", "my posts", "team", "support", "plan", "verification"] as const;
+const tabs = ["listings", "leads", "bookings", "marketplace", "quotes", "analytics", "portfolio", "areas", "my posts", "team", "support", "plan", "verification", "settings"] as const;
 type Tab = (typeof tabs)[number];
 
 /**
  * Seller hub: realtime listings, credit-unlocked leads and the subscription panel.
  * Role = seller required.
  */
-export default function SellerDashboard({ initialTab = "listings" }: { initialTab?: "listings" | "leads" | "marketplace" }) {
-  const { user, role, loading } = useAuth();
-  const uid = user?.uid ?? "";
+export default function SellerDashboard({ initialTab = "listings" }: { initialTab?: "listings" | "leads" | "marketplace" | "settings" }) {
+  const { user, profileName, role, loading, roleLoading, sellerAccountReady, sellerAccountLoading } = useAuth();
+  const uid = role === "seller" && sellerAccountReady ? user?.uid ?? "" : "";
   const [tab, setTab] = useState<Tab>(initialTab);
   const [acting, setActing] = useState<string | null>(null);
   const [leadActionError, setLeadActionError] = useState<string | null>(null);
@@ -72,15 +74,16 @@ export default function SellerDashboard({ initialTab = "listings" }: { initialTa
     cancel_at_period_end?: boolean;
   };
   const subscriptionEntitled = subscriptionIsEntitled({
+    plan: subDoc.plan ?? "starter",
     status: subDoc.subscription_status ?? subDoc.status,
     periodEnd: subDoc.current_period_end,
     cancelAtPeriodEnd: subDoc.cancel_at_period_end,
   });
-  const plan = subscriptionEntitled ? (subDoc.plan ?? "starter") : "starter";
-  const leadLimit = subscriptionEntitled
-    ? typeof subDoc.lead_limit === "number" ? subDoc.lead_limit : limitsFor(plan).leadsPerMonth
-    : limitsFor("starter").leadsPerMonth;
-  const leadsUsed = subscriptionEntitled ? Number(subDoc.leads_used ?? 0) : 0;
+  const plan = subscriptionEntitled ? normalizePlanId(subDoc.plan ?? "starter") : "starter";
+  const leadLimit = limitsFor(plan).leadsPerMonth;
+  const leadsUsed = subscriptionEntitled && plan === normalizePlanId(subDoc.plan ?? "starter")
+    ? Number(subDoc.leads_used ?? 0)
+    : 0;
 
   // ── Tab-scoped subscriptions ──────────────────────────────────────────────
   // This dashboard used to open TWELVE realtime listeners the moment it mounted,
@@ -146,6 +149,7 @@ export default function SellerDashboard({ initialTab = "listings" }: { initialTa
     support: "Support",
     plan: "Plan",
     verification: "Verify",
+    settings: "Account settings",
   };
   const TAB_ICON: Record<Tab, IconKey> = {
     listings: "building",
@@ -161,6 +165,7 @@ export default function SellerDashboard({ initialTab = "listings" }: { initialTa
     support: "message",
     plan: "award",
     verification: "badgeCheck",
+    settings: "settings",
   };
   // Badge counts are `undefined` until that tab's feed has actually loaded. That is
   // the visible cost of tab-scoped subscriptions: a gated tab shows no number until
@@ -272,7 +277,7 @@ export default function SellerDashboard({ initialTab = "listings" }: { initialTa
     }
   }
 
-  if (loading) return <DashboardSkeleton title="Loading seller hub" />;
+  if (loading || roleLoading || (role === "seller" && sellerAccountLoading)) return <DashboardSkeleton title="Loading seller hub" />;
 
   if (!user || !uid) {
     return (
@@ -285,60 +290,64 @@ export default function SellerDashboard({ initialTab = "listings" }: { initialTa
     );
   }
 
-  if (role !== "seller") {
+  if (role !== "seller" || !sellerAccountReady) {
     return (
       <div className="mx-auto w-full max-w-2xl px-4 py-10 text-center space-y-4 sm:py-16">
-        <h1 className="text-3xl font-black text-[#10243e]">Switch to a seller account</h1>
-        <p className="text-sm text-[#1d3a5f]/70">Your buyer dashboard and saved businesses stay untouched.</p>
-        <Link href="/register-seller" className="btn-hippo text-sm inline-flex">Continue seller registration →</Link>
+        <h1 className="text-3xl font-black text-[#10243e]">{role === "seller" ? "Complete seller registration" : "Switch to a seller account"}</h1>
+        <p className="text-sm text-[#1d3a5f]/70">{role === "seller" ? "Your seller tools will be available after your business profile is activated." : "Your buyer dashboard and saved businesses stay untouched."}</p>
+        <Link href="/register-seller" className="btn-hippo text-sm inline-flex">Continue seller registration</Link>
         <Link href="/dashboard" className="block text-xs font-bold text-[#558c2b] hover:underline">Keep me as a buyer</Link>
       </div>
     );
   }
 
   return (
-    <div className="mx-auto w-full max-w-6xl min-w-0 px-4 py-6 space-y-5 sm:px-6 sm:py-8">
-      <header className="flex flex-wrap items-center gap-3">
-        <div>
-          <p className="text-xs font-extrabold uppercase tracking-[0.16em] text-[#558c2b]">Seller hub</p>
-          <h1 className="text-2xl sm:text-3xl font-black text-[#10243e] break-words">{greetingFor()}, {user.displayName ?? "seller"}</h1>
-        </div>
-        <Link href="/list-business" className="btn-hippo text-sm ml-auto">+ New listing</Link>
-      </header>
-
-      {/* Tabs scroll horizontally on a phone instead of forcing the page wide.
-          Each tab carries its icon + live count, so the bar reads the same way
-          as the rest of the site and the numbers are always visible. */}
-      <nav className="scroll-x -mx-1 px-1" aria-label="Seller dashboard sections">
-        {tabs.filter((t) => t !== "team" || showTeamTab).map((t) => {
-          const label = TAB_LABEL[t];
-          const count = TAB_COUNT[t]?.();
-          return (
-            <button
-              key={t}
-              onClick={() => setTab(t)}
-              aria-current={tab === t ? "page" : undefined}
-              className={`inline-flex items-center gap-1.5 whitespace-nowrap px-3.5 py-2 rounded-full text-sm font-bold transition ${
-                tab === t
-                  ? "hippo-tab-active"
-                  : "bg-white border border-[#d6e1ec] text-[#1d3a5f] hover:border-[#7ac142]"
-              }`}
+    <div className="min-h-screen">
+      <PageHero kicker="Seller hub" title={`${greetingFor()}, ${profileName || user.displayName || "seller"}`}>
+        <div className="flex flex-col gap-4">
+          <div>
+            <Link
+              href="/list-business"
+              className="inline-flex items-center rounded-full bg-[#ffc72c] px-4 py-2 text-sm font-extrabold text-[#10243e] transition hover:bg-[#ffda66]"
             >
-              <KIcon name={TAB_ICON[t]} size={14} className="shrink-0" />
-              {label}
-              {count !== undefined && (
-                <span
-                  className={`ml-0.5 rounded-full px-1.5 py-0.5 text-[11px] font-black leading-none ${
-                    tab === t ? "bg-black/15" : "bg-[#f2f6fa] text-[#1d3a5f]/70"
+              + New listing
+            </Link>
+          </div>
+
+          {/* Tabs scroll horizontally on a phone instead of forcing the page wide. */}
+          <nav className="scroll-x -mx-1 px-1" aria-label="Seller dashboard sections">
+            {tabs.filter((t) => t !== "team" || showTeamTab).map((t) => {
+              const label = TAB_LABEL[t];
+              const count = TAB_COUNT[t]?.();
+              return (
+                <button
+                  key={t}
+                  onClick={() => setTab(t)}
+                  aria-current={tab === t ? "page" : undefined}
+                  className={`inline-flex items-center gap-1.5 whitespace-nowrap px-3.5 py-2 rounded-full text-sm font-bold transition ${
+                    tab === t
+                      ? "hippo-tab-active"
+                      : "bg-white border border-[#d6e1ec] text-[#1d3a5f] hover:border-[#7ac142]"
                   }`}
                 >
-                  {count}
-                </span>
-              )}
-            </button>
-          );
-        })}
-      </nav>
+                  <KIcon name={TAB_ICON[t]} size={14} className="shrink-0" />
+                  {label}
+                  {count !== undefined && (
+                    <span
+                      className={`ml-0.5 rounded-full px-1.5 py-0.5 text-[11px] font-black leading-none ${
+                        tab === t ? "bg-black/15" : "bg-[#f2f6fa] text-[#1d3a5f]/70"
+                      }`}
+                    >
+                      {count}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </nav>
+        </div>
+      </PageHero>
+      <main className="mx-auto w-full max-w-6xl min-w-0 space-y-5 px-4 py-8 sm:px-6">
 
       {tab === "listings" && (
         <div className="space-y-5">
@@ -378,7 +387,7 @@ export default function SellerDashboard({ initialTab = "listings" }: { initialTa
                 {b.verified
                   ? <span className="text-[10px] font-black bg-[#e8f6d8] text-[#3c6b1d] rounded-full px-2 py-0.5"><KIcon name="check" size={14} className="inline shrink-0" /> Verified</span>
                   : <span className="text-[10px] font-black bg-[#fff4d6] text-[#a36508] rounded-full px-2 py-0.5">Pending check</span>}
-                <Link href={`/business/${String(b.id)}`} className="text-xs font-bold text-[#558c2b] hover:underline ml-auto">View →</Link>
+                <Link href={`/business/${String(b.id)}`} className="text-xs font-bold text-[#558c2b] hover:underline ml-auto">View </Link>
                 <Link href={`/business/${String(b.id)}/edit`} className="text-xs font-bold text-[#10243e] hover:underline">Edit</Link>
                 {biz.rows.some((owned) => owned.id === b.id) && hasCap(plan, "featuredProfile") && (
                   <button
@@ -435,7 +444,7 @@ export default function SellerDashboard({ initialTab = "listings" }: { initialTa
                 }}
                 className="mt-2 font-bold underline"
               >
-                Go to Find leads and credits →
+                Go to Find leads and credits 
               </button>
             </div>
           )}
@@ -514,14 +523,14 @@ export default function SellerDashboard({ initialTab = "listings" }: { initialTa
                           : revealed[lid]
                             ? "View contact (unlocked)"
                             : isUnlocked
-                              ? "Reveal contact →"
+                              ? "Reveal contact "
                               : `Unlock contact · ${price} credits`}
                       </button>
                       {revealed[lid] && (
                         <>
                           <a href={`tel:${revealed[lid].phone.replace(/\s/g, "")}`} className="text-xs font-extrabold text-[#10243e] border-2 border-[#10243e] rounded-lg px-3 py-1.5 hover:bg-[#10243e] hover:text-white transition"><KIcon name="phone" size={14} className="inline shrink-0" /> {revealed[lid].phone}</a>
                           {revealed[lid].email && <a href={`mailto:${revealed[lid].email}`} className="text-xs font-bold text-[#558c2b] hover:underline">{revealed[lid].email}</a>}
-                          {revealed[lid].conversationId && <Link href={`/messages?c=${encodeURIComponent(revealed[lid].conversationId)}`} className="text-xs font-bold text-[#558c2b] hover:underline">Open Conversation →</Link>}
+                          {revealed[lid].conversationId && <Link href={`/messages?c=${encodeURIComponent(revealed[lid].conversationId)}`} className="text-xs font-bold text-[#558c2b] hover:underline">Open Conversation </Link>}
                         </>
                       )}
                       {isUnlocked ? (
@@ -544,7 +553,7 @@ export default function SellerDashboard({ initialTab = "listings" }: { initialTa
                     <div className="flex flex-wrap items-center gap-2 mt-2">
                       <a href={`tel:${revealed[lid].phone.replace(/\s/g, "")}`} className="text-xs font-extrabold text-[#10243e] border-2 border-[#10243e] rounded-lg px-3 py-1.5 hover:bg-[#10243e] hover:text-white transition"><KIcon name="phone" size={14} className="inline shrink-0" /> {revealed[lid].phone}</a>
                       {revealed[lid].email && <a href={`mailto:${revealed[lid].email}`} className="text-xs font-bold text-[#558c2b] hover:underline">{revealed[lid].email}</a>}
-                      {revealed[lid].conversationId && <Link href={`/messages?c=${encodeURIComponent(revealed[lid].conversationId)}`} className="text-xs font-bold text-[#558c2b] hover:underline">Open Conversation →</Link>}
+                      {revealed[lid].conversationId && <Link href={`/messages?c=${encodeURIComponent(revealed[lid].conversationId)}`} className="text-xs font-bold text-[#558c2b] hover:underline">Open Conversation </Link>}
                     </div>
                   )}
                   {closed && st !== "lost" && st !== "declined" && !revealed[lid] && (
@@ -813,16 +822,16 @@ export default function SellerDashboard({ initialTab = "listings" }: { initialTa
                       p.detail ?? p.excerpt ?? p.fee ?? p.pay ?? p.date ?? p.company ?? p.venue ?? p.business ?? "",
                     ).slice(0, 140);
                     return (
-                      <div key={pid} className="rounded-xl border border-[#e7eef5] p-3 flex flex-wrap items-start gap-2">
+                      <div key={pid} className="flex min-w-0 flex-col items-stretch gap-3 rounded-xl border border-[#e7eef5] p-3 sm:flex-row sm:items-start">
                         <div className="min-w-0 flex-1">
-                          <b className="text-sm text-[#10243e] block">{String(p.title ?? "")}</b>
-                          {preview && <span className="text-xs text-[#1d3a5f]/65 block mt-0.5">{preview}</span>}
+                          <b className="block break-words text-sm text-[#10243e]">{String(p.title ?? "")}</b>
+                          {preview && <span className="mt-0.5 block break-words text-xs text-[#1d3a5f]/65">{preview}</span>}
                           <span className="flex flex-wrap items-center gap-2 mt-1.5">
                             {st === "pending" && <span className="text-[10px] font-black bg-[#fff4d6] text-[#a36508] rounded-full px-2 py-0.5">Pending review</span>}
                             {feat && <span className="text-[10px] font-black bg-[#10243e] text-[#ffc72c] rounded-full px-2 py-0.5"><KIcon name="star" size={14} className="inline shrink-0" /> Featured</span>}
                           </span>
                         </div>
-                        <span className="flex gap-3 shrink-0">
+                        <span className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-[#e7eef5] pt-2 sm:shrink-0 sm:border-0 sm:pt-0">
                           <Link href={href} className="text-xs font-bold text-[#1d3a5f] hover:underline">Preview</Link>
                           {hasCap(plan, col === "deals" ? "featuredDeals" : col === "events" ? "featuredEvents" : "promoFeatures") && ["deals", "events"].includes(col) && (
                             <button
@@ -888,15 +897,17 @@ export default function SellerDashboard({ initialTab = "listings" }: { initialTa
                 is the revenue moment, so it must be visible here. */}
             {leadLimit !== null && leadsUsed >= leadLimit && (
               <Link href="/list-business" className="btn-hippo text-xs mt-3 inline-flex">
-                Upgrade for more leads →
+                Upgrade for more leads 
               </Link>
             )}
           </div>
-          <Link href="/list-business" className="btn-sun text-sm w-fit">Manage plan / upgrade →</Link>
+          <Link href="/list-business" className="btn-sun text-sm w-fit">Manage plan / upgrade </Link>
         </Panel>
       )}
 
       {tab === "verification" && <VerificationRequest businessId={String(primary?.id ?? "")} businessName={String(primary?.name ?? "")} />}
+      {tab === "settings" && <AccountSettings />}
+      </main>
     </div>
   );
 }

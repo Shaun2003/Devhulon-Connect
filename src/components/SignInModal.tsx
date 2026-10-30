@@ -6,6 +6,7 @@ import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { useAuth, type Role } from "@/components/AuthProvider";
 import { SITE_SHORT } from "@/lib/site";
+import { RequiredFieldsLegend } from "@/components/forms/FormFields";
 import {
   ROLE_TERMS_PATH,
   SIGNUP_TERMS_DETAIL,
@@ -53,7 +54,7 @@ function friendly(e: unknown): string {
  */
 export default function SignInModal({ open, onClose, presetRole }: { open: boolean; onClose: () => void; presetRole?: Role }) {
   const router = useRouter();
-  const { signIn, signInSellerGoogle, signInEmail, resetPassword } = useAuth();
+  const { signIn, signInSellerGoogle, signInSellerEmail, signInEmail, resetPassword } = useAuth();
   const [role, setRole] = useState<Role>(presetRole ?? null);
   const [mode, setMode] = useState<"signin" | "signup">("signin");
   // "reset" replaces the form with the forgot-password flow (spec §46).
@@ -93,8 +94,17 @@ export default function SignInModal({ open, onClose, presetRole }: { open: boole
       onClose();
     } catch (e) { setErr(friendly(e)); } finally { setBusy(false); }
   }
-  async function emailSubmit(e: FormEvent) {
+  async function emailSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    const invalidField = Array.from(e.currentTarget.querySelectorAll<HTMLInputElement>("input"))
+      .find((field) => !field.disabled && !field.validity.valid);
+    if (invalidField) {
+      invalidField.setAttribute("aria-invalid", "true");
+      invalidField.setAttribute("aria-describedby", "auth-error");
+      setErr(`${invalidField.labels?.[0]?.innerText.replace("*", "").trim() ?? "This field"}: ${invalidField.validationMessage || "Check this field."}`);
+      invalidField.focus();
+      return;
+    }
     if (!role) return;
     if (role === "seller" && mode === "signup") {
       openSellerRegistration();
@@ -108,7 +118,11 @@ export default function SignInModal({ open, onClose, presetRole }: { open: boole
     }
     setBusy(true); setErr(null);
     try {
-      await signInEmail(role, email, password, mode);
+      if (role === "seller" && mode === "signin") {
+        await signInSellerEmail(email, password);
+      } else {
+        await signInEmail(role, email, password, mode);
+      }
       if (mode === "signup") {
         // Stay open on the verification panel — the account is created, but the
         // user should know a confirmation email is on its way.
@@ -118,8 +132,17 @@ export default function SignInModal({ open, onClose, presetRole }: { open: boole
       }
     } catch (e2) { setErr(friendly(e2)); } finally { setBusy(false); }
   }
-  async function resetSubmit(e: FormEvent) {
+  async function resetSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    const invalidField = Array.from(e.currentTarget.querySelectorAll<HTMLInputElement>("input"))
+      .find((field) => !field.disabled && !field.validity.valid);
+    if (invalidField) {
+      invalidField.setAttribute("aria-invalid", "true");
+      invalidField.setAttribute("aria-describedby", "auth-error");
+      setErr(`Email: ${invalidField.validationMessage || "Enter a valid email address."}`);
+      invalidField.focus();
+      return;
+    }
     setBusy(true); setErr(null); setNotice(null);
     try {
       await resetPassword(email);
@@ -188,21 +211,49 @@ export default function SignInModal({ open, onClose, presetRole }: { open: boole
                 </div>
               </>
             )}
-            <form onSubmit={emailSubmit} className="space-y-2">
-              <input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" className="w-full rounded-xl border-2 border-[#e7eef5] focus:border-[#7ac142] px-3 py-2.5 text-sm outline-none" />
-              <input type="password" required minLength={6} value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Password (min 6 characters)" className="w-full rounded-xl border-2 border-[#e7eef5] focus:border-[#7ac142] px-3 py-2.5 text-sm outline-none" />
+            <form
+              onSubmit={emailSubmit}
+              noValidate
+              onInvalidCapture={(event) => {
+                const field = event.target;
+                if (field instanceof HTMLInputElement) {
+                  field.setAttribute("aria-invalid", "true");
+                  setErr(`${field.labels?.[0]?.innerText.replace("*", "").trim() ?? "This field"}: ${field.validationMessage}`);
+                }
+              }}
+              onInputCapture={(event) => {
+                const field = event.target;
+                if (field instanceof HTMLInputElement && field.validity.valid) {
+                  field.removeAttribute("aria-invalid");
+                  field.removeAttribute("aria-describedby");
+                  setErr(null);
+                }
+              }}
+              className="space-y-2"
+            >
+              <RequiredFieldsLegend />
+              <label className="block text-xs font-bold text-[#10243e]">
+                Email <span className="font-black text-red-600" aria-hidden="true">*</span>
+                <input type="email" required autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" className="mt-1 w-full rounded-xl border-2 border-[#e7eef5] focus:border-[#7ac142] px-3 py-2.5 text-sm font-normal outline-none" />
+              </label>
+              <label className="block text-xs font-bold text-[#10243e]">
+                Password <span className="font-black text-red-600" aria-hidden="true">*</span>
+                <input type="password" required minLength={6} autoComplete={mode === "signup" ? "new-password" : "current-password"} value={password} onChange={(e) => setPassword(e.target.value)} placeholder="At least 6 characters" className="mt-1 w-full rounded-xl border-2 border-[#e7eef5] focus:border-[#7ac142] px-3 py-2.5 text-sm font-normal outline-none" />
+              </label>
               {/* Signup ONLY, and never pre-ticked — a pre-ticked box is not
                   consent, it is a formality dressed as consent. */}
               {mode === "signup" && (
                 <label className="flex items-start gap-2.5 rounded-xl bg-[#f7fafc] border-2 border-[#e7eef5] p-3 cursor-pointer">
                   <input
                     type="checkbox"
+                    required
                     checked={agreed}
                     onChange={(e) => { setAgreed(e.target.checked); setErr(null); }}
+                    onInvalid={() => setErr("Accept the terms to create an account.")}
                     className="mt-0.5 w-4 h-4 shrink-0 accent-[#558c2b]"
                   />
                   <span className="text-xs text-[#10243e] leading-snug">
-                    <b>{SIGNUP_TERMS_LABEL}</b>{" "}
+                    <b><span className="mr-1 font-black text-red-600" aria-hidden="true">*</span>{SIGNUP_TERMS_LABEL}</b>{" "}
                     <span className="text-[#1d3a5f]/70">{SIGNUP_TERMS_DETAIL}</span>{" "}
                     <Link href="/terms" target="_blank" className="font-bold text-[#558c2b] hover:underline">Terms</Link>
                     {" · "}
@@ -219,7 +270,7 @@ export default function SignInModal({ open, onClose, presetRole }: { open: boole
                 </label>
               )}
               <button type="submit" disabled={busy} className="btn-hippo w-full text-sm disabled:opacity-60">
-                {busy ? "…" : mode === "signup" ? (role === "seller" ? "Create seller account →" : "Create buyer account →") : role === "seller" ? "Sign in as seller →" : "Sign in as buyer →"}
+                {busy ? "…" : mode === "signup" ? (role === "seller" ? "Create seller account " : "Create buyer account ") : role === "seller" ? "Sign in as seller " : "Sign in as buyer "}
               </button>
               {mode === "signin" && (
                 <p className="text-xs text-center">
@@ -237,7 +288,7 @@ export default function SignInModal({ open, onClose, presetRole }: { open: boole
                   onClick={onClose}
                   className="font-bold text-[#558c2b] hover:underline"
                 >
-                  Create seller account →
+                  Create seller account 
                 </Link>
               </p>
             ) : (
@@ -248,7 +299,7 @@ export default function SignInModal({ open, onClose, presetRole }: { open: boole
                 </button>
               </p>
             )}
-            {err && <p className="text-sm font-bold text-red-700 bg-red-50 rounded-xl px-3 py-2">{err}</p>}
+            {err && <p id="auth-error" role="alert" className="text-sm font-bold text-red-700 bg-red-50 rounded-xl px-3 py-2">{err}</p>}
             <p className="text-[11px] text-[#1d3a5f]/50 text-center">Free · no spam · your role can be changed later from the dashboard.</p>
           </div>
         )}
@@ -257,14 +308,37 @@ export default function SignInModal({ open, onClose, presetRole }: { open: boole
           <div className="mt-4 space-y-3">
             <button onClick={() => { setPanel("form"); setErr(null); setNotice(null); }} className="text-xs font-bold text-[#558c2b] hover:underline">← Back to sign in</button>
             <p className="text-sm text-[#1d3a5f]/70">Enter your email and we&apos;ll send a password-reset link.</p>
-            <form onSubmit={resetSubmit} className="space-y-2">
-              <input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" autoComplete="email" className="w-full rounded-xl border-2 border-[#e7eef5] focus:border-[#7ac142] px-3 py-2.5 text-sm outline-none" />
+            <form
+              onSubmit={resetSubmit}
+              noValidate
+              onInvalidCapture={(event) => {
+                const field = event.target;
+                if (field instanceof HTMLInputElement) {
+                  field.setAttribute("aria-invalid", "true");
+                  setErr(`Email: ${field.validationMessage}`);
+                }
+              }}
+              onInputCapture={(event) => {
+                const field = event.target;
+                if (field instanceof HTMLInputElement && field.validity.valid) {
+                  field.removeAttribute("aria-invalid");
+                  field.removeAttribute("aria-describedby");
+                  setErr(null);
+                }
+              }}
+              className="space-y-2"
+            >
+              <RequiredFieldsLegend />
+              <label className="block text-xs font-bold text-[#10243e]">
+                Email <span className="font-black text-red-600" aria-hidden="true">*</span>
+                <input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" autoComplete="email" className="mt-1 w-full rounded-xl border-2 border-[#e7eef5] focus:border-[#7ac142] px-3 py-2.5 text-sm font-normal outline-none" />
+              </label>
               <button type="submit" disabled={busy} className="btn-hippo w-full text-sm disabled:opacity-60">
-                {busy ? "Sending…" : "Send reset link →"}
+                {busy ? "Sending…" : "Send reset link "}
               </button>
             </form>
             {notice && <p className="text-sm font-bold text-green-800 bg-green-50 rounded-xl px-3 py-2">{notice}</p>}
-            {err && <p className="text-sm font-bold text-red-700 bg-red-50 rounded-xl px-3 py-2">{err}</p>}
+            {err && <p id="auth-error" role="alert" className="text-sm font-bold text-red-700 bg-red-50 rounded-xl px-3 py-2">{err}</p>}
           </div>
         )}
 
@@ -278,7 +352,7 @@ export default function SignInModal({ open, onClose, presetRole }: { open: boole
               Account created{email ? <> for <b>{email}</b></> : ""} — we sent a verification
               email to confirm it&apos;s really you. Click the link inside, then continue below.
             </p>
-            <button onClick={onClose} className="btn-hippo w-full text-sm">Continue →</button>
+            <button onClick={onClose} className="btn-hippo w-full text-sm">Continue </button>
           </div>
         )}
         </div>

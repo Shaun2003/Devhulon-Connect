@@ -3,12 +3,11 @@ import { useState } from "react";
 import Link from "next/link";
 import { useAuth } from "@/components/AuthProvider";
 import { useRealtime, subscribeMySubscription, subscribeMyPayments, type RealtimeError } from "@/lib/realtime";
-import { cancelSellerSubscription, resumeSellerSubscription, subscribeSeller } from "@/lib/monetize";
+import { subscribeSeller } from "@/lib/monetize";
 import {
-  TRIAL_DAYS,
   annualSaving,
-  daysUntil,
   formatZAR,
+  normalizePlanId,
   perMonthEquivalent,
   planRank,
   priceFor,
@@ -20,6 +19,8 @@ import { ErrorNote } from "@/components/dash/parts";
 import { usePlans } from "@/components/PlanConfigProvider";
 import { KIcon } from "@/lib/icons";
 import { verifyCheckout } from "@/lib/monetize";
+import { cancelSellerSubscription, resumeSellerSubscription } from "@/lib/monetize";
+import { PageHero } from "@/components/ui";
 
 type Row = Record<string, unknown>;
 
@@ -33,83 +34,70 @@ type Cta = {
 
 /**
  * /pricing (spec §21 + §23): monthly/annual toggle, per-plan cards from
- * plans.ts (single source of truth), 7-day trial, current-plan awareness,
- * cancel/resume of renewals and real billing history from `payments/{reference}`.
+ * plans.ts (single source of truth), current-plan awareness and real billing
+ * history from `payments/{reference}`.
  *
  * Checkout goes through /api/billing/checkout (server-resolved price) — the
  * browser only ever redirects to the provider's hosted page.
  */
 export default function PricingClient() {
-  const { user, loading } = useAuth();
+  const { user, role, roleLoading, loading } = useAuth();
   const uid = user?.uid ?? "";
+  const sellerUid = role === "seller" ? uid : "";
   const [period, setPeriod] = useState<BillingPeriod>("monthly");
+  const [autoRenew, setAutoRenew] = useState(false);
   const [busyPlan, setBusyPlan] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   // Admin-configured prices/limits (§21) — re-renders when overrides load.
   const plans = usePlans();
 
-  const subs = useRealtime<Row>((cb, onErr) => (uid ? subscribeMySubscription(uid, cb as never, onErr) : () => {}), [], [uid]);
-  const payments = useRealtime<Row>((cb, onErr) => (uid ? subscribeMyPayments(uid, cb as never, onErr) : () => {}), [], [uid]);
+  const subs = useRealtime<Row>((cb, onErr) => (sellerUid ? subscribeMySubscription(sellerUid, cb as never, onErr) : () => {}), [], [sellerUid]);
+  const payments = useRealtime<Row>((cb, onErr) => (sellerUid ? subscribeMyPayments(sellerUid, cb as never, onErr) : () => {}), [], [sellerUid]);
 
   const sub = subs.rows[0];
-  const subPlan = (sub?.plan as PlanId | undefined) ?? null;
+  const storedPlan = normalizePlanId(sub?.plan ?? "starter");
   const subStatus = String(sub?.subscription_status ?? sub?.status ?? "");
   const periodEnd = (sub?.current_period_end as string | undefined) ?? null;
-  const cancelAtEnd = sub?.cancel_at_period_end === true;
-  const subActive = subPlan !== null && subscriptionIsEntitled({
+  const storedPlanActive = subscriptionIsEntitled({
+    plan: storedPlan,
     status: subStatus,
     periodEnd,
-    cancelAtPeriodEnd: cancelAtEnd,
+    cancelAtPeriodEnd: sub?.cancel_at_period_end === true,
   });
-  const isTrial = subStatus === "trialing";
-  const trialLeft = daysUntil((sub?.trial_ends_at as string | undefined) ?? null);
-  const currentRank = subActive ? planRank(subPlan) : -1;
+  const subPlan: PlanId = storedPlan === "premium" && storedPlanActive ? "premium" : "starter";
+  const subActive = true;
+  const currentRank = planRank(subPlan);
+  const renewalError = String(sub?.auto_renew_error ?? "");
+  const renewalNotice = renewalError === "renewal_attempts_exhausted"
+    ? "Automatic renewal stopped after three failed attempts. Complete a new checkout to continue Premium."
+    : renewalError === "renewal_amount_mismatch_review_required"
+      ? "Automatic renewal was paused for a payment verification review. No further renewal charges will be attempted."
+      : renewalError === "payment_method_not_reusable" || renewalError === "payment_method_missing"
+        ? "Paystack did not provide a reusable payment method. Premium remains prepaid; renew manually at the end of the paid period."
+        : renewalError === "renewal_status_pending"
+          ? "Your renewal is still being verified. Another renewal charge will not be attempted while its status is unclear."
+          : renewalError
+            ? "Automatic renewal could not be completed. Review your billing history or contact support before the next renewal."
+            : null;
 
   async function choose(planId: PlanId) {
     setBusyPlan(planId);
     setError(null);
     setNote(null);
     try {
-      // "free" maps to the 7-day Starter trial on the server (one per account).
-      const planArg: PlanId | "free" = planId === "starter" && !sub ? "free" : planId;
-      const res = await subscribeSeller(planArg, undefined, { period });
+      const res = await subscribeSeller(planId, undefined, {
+        period,
+        autoRenew: planId === "premium" && autoRenew,
+      });
       if (res.url) {
         window.location.assign(res.url); // hosted checkout — the browser only redirects
         return;
       }
-      if (res.trial) setNote(res.message ?? "Your 7-day free trial has started.");
-      else if (res.ok) setNote(res.message ?? "Plan updated.");
+      if (res.ok) setNote(res.message ?? "Plan updated.");
       else setError(res.message ?? "Could not start checkout.");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not start checkout.");
-    } finally {
-      setBusyPlan(null);
-    }
-  }
-
-  async function cancelRenewal() {
-    if (!confirm("Cancel auto-renewal? You keep your plan until the end of the paid period.")) return;
-    setBusyPlan("cancel");
-    setError(null);
-    try {
-      const res = await cancelSellerSubscription(false);
-      setNote(res.ok ? "Auto-renewal cancelled — your plan stays active until the period ends." : res.message ?? "Could not cancel.");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not cancel.");
-    } finally {
-      setBusyPlan(null);
-    }
-  }
-
-  async function resumeRenewal() {
-    setBusyPlan("resume");
-    setError(null);
-    try {
-      const res = await resumeSellerSubscription();
-      setNote(res.ok ? "Auto-renewal is back on." : res.message ?? "Could not resume.");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not resume.");
     } finally {
       setBusyPlan(null);
     }
@@ -133,89 +121,166 @@ export default function PricingClient() {
     }
   }
 
+  async function stopRenewal() {
+    if (!window.confirm("Turn off automatic renewal? Premium remains active until the paid-through date.")) return;
+    setBusyPlan("renewal");
+    setError(null);
+    setNote(null);
+    try {
+      const result = await cancelSellerSubscription(false);
+      if (result.ok) setNote("Automatic renewal is off. Premium remains active until the paid-through date.");
+      else setError(result.message ?? "Could not cancel automatic renewal.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not cancel automatic renewal.");
+    } finally {
+      setBusyPlan(null);
+    }
+  }
+
+  async function resumePaidPeriod() {
+    setBusyPlan("renewal");
+    setError(null);
+    setNote(null);
+    try {
+      const result = await resumeSellerSubscription();
+      if (result.ok) setNote("Your paid Premium access is active again. Automatic renewal remains off.");
+      else setError(result.message ?? "Could not resume Premium access.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not resume Premium access.");
+    } finally {
+      setBusyPlan(null);
+    }
+  }
+
   function ctaFor(planId: PlanId): Cta {
     const rank = planRank(planId);
     if (!user) {
       return { label: "Sign in to choose", action: () => {}, tone: "navy", disabled: true };
     }
     if (subActive && rank === currentRank) {
-      if (cancelAtEnd) {
-        return { label: "Resume auto-renewal", action: resumeRenewal, tone: "ghost", current: true, disabled: busyPlan === "resume" };
+      if (planId === "starter") {
+        return { label: "Current plan — free", action: () => {}, tone: "ghost", current: true, disabled: true };
       }
-      return { label: "Current plan — cancel renewal", action: cancelRenewal, tone: "ghost", current: true, disabled: busyPlan === "cancel" };
+      return { label: "Current plan", action: () => {}, tone: "ghost", current: true, disabled: true };
     }
     if (subActive && rank < currentRank) {
-      return { label: `Downgrade to ${planId}`, action: () => choose(planId), tone: "ghost", disabled: busyPlan === planId };
+      return { label: "Starter after Premium expires", action: () => {}, tone: "ghost", disabled: true };
     }
     if (subActive && rank > currentRank) {
       return { label: `Upgrade to ${planId}`, action: () => choose(planId), tone: "primary", disabled: busyPlan === planId };
     }
     if (planId === "starter" && !sub) {
-      return { label: `Start ${TRIAL_DAYS}-day free trial`, action: () => choose(planId), tone: "primary", disabled: busyPlan === planId };
+      return { label: "Choose Starter — free", action: () => choose(planId), tone: "primary", disabled: busyPlan === planId };
     }
     return { label: `Choose ${planId}`, action: () => choose(planId), tone: rank === 1 ? "primary" : "navy", disabled: busyPlan === planId };
   }
   const maxSaving = Math.max(...plans.map((p) => annualSaving(p).percent));
 
-  return (
-    <div className="max-w-6xl mx-auto px-4 py-8 space-y-6">
-      <header className="hippo-hero min-w-0 rounded-3xl p-5 text-center text-white anim-rise sm:p-10">
-        <p className="text-xs font-extrabold uppercase tracking-[0.18em] text-[#ffc72c]">Plans &amp; pricing</p>
-        <h1 className="mt-2 break-words text-3xl font-black tracking-tight sm:text-5xl">Get matched with buyers who need you</h1>
-        <p className="mx-auto mt-3 max-w-2xl break-words text-sm text-white/75 sm:text-base">
-          Every plan starts with matched quote requests, a business profile and reviews. {TRIAL_DAYS}-day
-          free trial on Starter. Cancel anytime.
-        </p>
-
-        {/* Monthly / Annual toggle (§23) */}
-        <div className="mt-6 inline-flex items-center gap-1 rounded-full bg-white/10 border border-white/25 p-1" role="group" aria-label="Billing period">
-          {(["monthly", "annual"] as const).map((p) => (
-            <button
-              key={p}
-              onClick={() => setPeriod(p)}
-              aria-pressed={period === p}
-              className={`rounded-full px-5 py-2 text-sm font-extrabold capitalize transition ${period === p ? "bg-white text-[#10243e]" : "text-white/80 hover:text-white"}`}
-            >
-              {p}
-              {p === "annual" && <span className="ml-1.5 text-[10px] font-black text-[#ffc72c]">−{maxSaving}%</span>}
-            </button>
-          ))}
+  if (loading || (user && roleLoading)) {
+    return (
+      <div className="mx-auto min-h-screen max-w-6xl animate-pulse space-y-5 px-4 py-10" role="status" aria-label="Loading pricing">
+        <div className="mx-auto h-8 w-48 rounded bg-[#e7eef5]" />
+        <div className="mx-auto h-12 w-2/3 rounded bg-[#e7eef5]" />
+        <div className="grid gap-4 pt-8 md:grid-cols-2">
+          <div className="h-72 rounded-2xl bg-[#f2f6fa]" />
+          <div className="h-72 rounded-2xl bg-[#f2f6fa]" />
         </div>
-        {period === "annual" && (
-          <p className="text-xs text-white/70 mt-2">Annual billing = 2 months free, charged once a year.</p>
-        )}
-      </header>
+      </div>
+    );
+  }
+
+  if (user && role !== "seller") {
+    return (
+      <div className="min-h-screen">
+        <PageHero
+          kicker="For buyers"
+          title="DevhulonConnect is free for buyers"
+          sub="Starter and Premium subscriptions are for sellers. You can browse businesses, save favourites, and request quotes without a seller plan."
+          align="center"
+        />
+        <main className="mx-auto max-w-3xl space-y-5 px-4 py-10">
+          <section className="hippo-card p-5 text-center sm:p-8">
+            <h2 className="text-xl font-black text-[#10243e]">What would you like to do?</h2>
+            <p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-[#1d3a5f]/70">
+              No subscription or credits are needed to find local services and request quotes.
+            </p>
+            <div className="mt-5 flex flex-wrap justify-center gap-3">
+              <Link href="/request-quote" className="btn-hippo text-sm">Request free quotes</Link>
+              <Link href="/services" className="btn-sun text-sm">Browse services</Link>
+              <Link href="/dashboard" className="self-center text-sm font-bold text-[#558c2b] hover:underline">Buyer dashboard</Link>
+            </div>
+          </section>
+          <p className="text-center text-sm text-[#1d3a5f]/65">
+            Have a business to promote? <Link href="/register-seller" className="font-bold text-[#558c2b] hover:underline">Register as a seller</Link> to view seller plans.
+          </p>
+        </main>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen">
+      <PageHero
+        kicker="Plans & pricing"
+        title="Get matched with buyers who need you"
+        sub="Compare businesses for free, then unlock genuine buyer requests with credits. Starter is free; Premium is R300/month and billed upfront for the selected period. You can choose a one-time checkout or opt in to automatic Paystack renewal."
+        align="center"
+      >
+        <div className="flex flex-col items-center gap-2">
+          {/* Monthly / Annual toggle (§23) */}
+          <div className="inline-flex items-center gap-1 rounded-full border border-white/25 bg-white/10 p-1" role="group" aria-label="Billing period">
+            {(["monthly", "annual"] as const).map((p) => (
+              <button
+                key={p}
+                onClick={() => setPeriod(p)}
+                aria-pressed={period === p}
+                className={`rounded-full px-5 py-2 text-sm font-extrabold capitalize transition ${period === p ? "bg-white text-[#10243e]" : "text-white/80 hover:text-white"}`}
+              >
+                {p}
+                {p === "annual" && <span className="ml-1.5 text-[10px] font-black text-[#ffc72c]">−{maxSaving}%</span>}
+              </button>
+            ))}
+          </div>
+          {period === "annual" && (
+            <p className="text-xs text-white/70">Annual billing is charged upfront; included credits are allocated monthly while Premium is active.</p>
+          )}
+          {user && (
+            <label className="flex max-w-2xl items-start justify-center gap-2 text-center text-xs text-white/80">
+              <input
+                type="checkbox"
+                checked={autoRenew}
+                onChange={(event) => setAutoRenew(event.target.checked)}
+                className="mt-0.5 accent-[#7ac142]"
+              />
+              <span>
+                Opt in to automatic {period} renewal through Paystack at the displayed price. You can cancel renewal at any time; Premium access remains through the paid period.
+              </span>
+            </label>
+          )}
+        </div>
+      </PageHero>
+
+      <main className="mx-auto max-w-6xl space-y-6 px-4 py-10">
 
       {error && <p className="text-sm font-bold text-red-700 bg-red-50 rounded-2xl px-4 py-3">{error}</p>}
       {note && <p className="text-sm font-bold text-[#3c6b1d] bg-[#e8f6d8] rounded-2xl px-4 py-3">{note}</p>}
       <ErrorNote error={subs.error as RealtimeError | null} />
-      {/* Trial status banner (§22) */}
-      {isTrial && (
-        <section className="hippo-card p-5">
-          <div className="flex flex-wrap items-center gap-2">
-            <h2 className="font-black text-[#10243e]">Starter Trial</h2>
-            <span className="text-[10px] font-black bg-[#fff4d6] text-[#a36508] rounded-full px-2 py-0.5">
-              {trialLeft} {trialLeft === 1 ? "day" : "days"} remaining
-            </span>
-          </div>
-          <div className="mt-2 h-2.5 rounded-full bg-[#f2f6fa] overflow-hidden" role="progressbar" aria-valuenow={Math.max(0, trialLeft)} aria-valuemin={0} aria-valuemax={TRIAL_DAYS}>
-            <div className="h-full rounded-full bg-[#7ac142]" style={{ width: `${Math.max(0, Math.min(100, (trialLeft / TRIAL_DAYS) * 100))}%` }} />
-          </div>
-          <p className="text-xs text-[#1d3a5f]/60 mt-2">
-            {trialLeft > 0
-              ? `Your trial ends in ${trialLeft} ${trialLeft === 1 ? "day" : "days"}. Choose a plan below to keep your lead allowance flowing — nothing is charged during the trial.`
-              : "Your trial has ended — pick a plan below to keep receiving matched leads."}
-          </p>
-        </section>
-      )}
-
+      {renewalNotice && <p className="rounded-2xl bg-[#fff4d6] px-4 py-3 text-sm font-bold text-[#805300]">{renewalNotice}</p>}
       {/* Current-plan status strip (§23: current plan + renewal date) */}
       {subActive && (
         <section className="hippo-card p-4 flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
-          <span>Current plan: <b className="uppercase text-[#10243e]">{String(subPlan)}</b>{isTrial ? " (trial)" : ""}</span>
-          <span>Renews: <b className="text-[#10243e]">{periodEnd ? new Date(periodEnd).toLocaleDateString("en-ZA", { day: "numeric", month: "long", year: "numeric" }) : "—"}</b>{cancelAtEnd ? " (auto-renewal off)" : ""}</span>
-          {typeof sub?.lead_limit === "number" && (
-            <span>Leads: <b className="text-[#10243e]">{String(sub.leads_used ?? 0)}/{String(sub.lead_limit)}</b> this period</span>
+          <span>Current plan: <b className="uppercase text-[#10243e]">{subPlan}</b></span>
+          <span>{subPlan === "premium" ? "Paid through" : "Monthly charge"}: <b className="text-[#10243e]">{subPlan === "premium" && periodEnd ? new Date(periodEnd).toLocaleDateString("en-ZA", { day: "numeric", month: "long", year: "numeric" }) : "R0"}</b>{subPlan === "premium" ? (sub?.auto_renew === true ? " · automatic renewal enabled" : " · renew with another checkout") : ""}</span>
+          <span>Lead opportunities: <b className="text-[#10243e]">{subPlan === "premium" ? "Unlimited eligible" : `${String(sub?.leads_used ?? 0)}/3`}</b></span>
+          {subPlan === "premium" && sub?.auto_renew === true && (
+            <button type="button" onClick={() => void stopRenewal()} disabled={busyPlan === "renewal"} className="rounded-full border border-[#10243e] px-3 py-1 text-xs font-bold disabled:opacity-50">
+              {busyPlan === "renewal" ? "Updating…" : "Turn off auto-renew"}
+            </button>
+          )}
+          {subPlan === "premium" && sub?.cancel_at_period_end === true && (
+            <button type="button" onClick={() => void resumePaidPeriod()} disabled={busyPlan === "renewal"} className="rounded-full border border-[#10243e] px-3 py-1 text-xs font-bold disabled:opacity-50">
+              {busyPlan === "renewal" ? "Updating…" : "Resume paid access"}
+            </button>
           )}
         </section>
       )}
@@ -276,7 +341,7 @@ export default function PricingClient() {
       )}
 
       {/* Plan cards — rendered from plans.ts, the same config checkout prices from */}
-      <div className="grid md:grid-cols-3 gap-4 items-stretch">
+      <div className="grid md:grid-cols-2 gap-4 items-stretch">
         {plans.map((p) => {
           const s = annualSaving(p);
           const cta = ctaFor(p.id);
@@ -298,16 +363,11 @@ export default function PricingClient() {
                   {formatZAR(perMonthEquivalent(p, period))}/mo equivalent · save {formatZAR(s.amount)} ({s.percent}%)
                 </p>
               )}
-              {p.trialDays ? <p className="text-[11px] text-[#1d3a5f]/60 mt-0.5">{p.trialDays}-day free trial</p> : null}
+              {p.id === "premium" ? <p className="text-[11px] text-[#1d3a5f]/60 mt-0.5">R300/month; credits are granted only after confirmed payment and allocated monthly.</p> : null}
               <p className="text-xs text-[#1d3a5f]/60 mt-2">{p.blurb}</p>
               <p className="mt-3 rounded-xl bg-[#e8f6d8] px-3 py-2 text-sm font-extrabold text-[#3c6b1d]">
                 {p.includedCredits} credits included monthly
               </p>
-              {p.id === "starter" && p.trialDays ? (
-                <p className="mt-1 text-[11px] text-[#1d3a5f]/60">
-                  Starter credits begin after the trial, with your first paid month.
-                </p>
-              ) : null}
               <ul className="text-sm mt-4 space-y-2 flex-1 text-[#10243e]">
                 {p.features.map((f) => (
                   <li key={f} className="flex gap-2"><span className="text-[#7ac142] font-black shrink-0"><KIcon name="check" size={14} /></span>{f}</li>
@@ -322,7 +382,7 @@ export default function PricingClient() {
               >
                 {busyPlan === p.id ? "Working…" : cta.label}
               </button>
-              {isCurrent && <p className="text-[11px] text-[#1d3a5f]/55 text-center mt-2">You&apos;re on this plan{isTrial ? " (trial)" : ""}.</p>}
+              {isCurrent && <p className="text-[11px] text-[#1d3a5f]/55 text-center mt-2">You&apos;re on this plan.</p>}
             </div>
           );
         })}
@@ -330,10 +390,11 @@ export default function PricingClient() {
 
       {!user && !loading && (
         <p className="text-center text-sm text-[#1d3a5f]/70">
-          <Link href="/list-business" className="font-bold text-[#558c2b] hover:underline">List your business first →</Link>{" "}
+          <Link href="/list-business" className="font-bold text-[#558c2b] hover:underline">List your business first </Link>{" "}
           (or sign in above to choose a plan)
         </p>
       )}
+      </main>
     </div>
   );
 }

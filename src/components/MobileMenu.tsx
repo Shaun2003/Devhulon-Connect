@@ -9,6 +9,7 @@ import { SITE_SHORT } from "@/lib/site";
 
 const LINK_ICONS: Record<string, IconKey> = {
   "/dashboard": "profile",
+  "/dashboard?tab=settings": "settings",
   "/services": "layers",
   "/request-quote": "message",
   "/find-pro": "search",
@@ -27,8 +28,13 @@ export default function MobileMenu({
   exploreLinks: { href: string; label: string }[];
 }) {
   const [open, setOpen] = useState(false);
-  const { isAdmin, user, role } = useAuth();
-  const profileLabel = user ? (role === "seller" ? "Seller profile" : "My profile") : "Sign in / Profile";
+  const { isAdmin, user, role, sellerAccountReady, cancelSellerSetup, signOutNow } = useAuth();
+  const [cancelingSetup, setCancelingSetup] = useState(false);
+  const profileLabel = !user
+    ? "Sign in / Profile"
+    : role === "seller"
+      ? sellerAccountReady ? "Seller hub" : "Buyer dashboard"
+      : "Buyer dashboard";
   useBodyScrollLock(open);
 
   function navigationLink(link: { href: string; label: string }) {
@@ -43,7 +49,7 @@ export default function MobileMenu({
           <KIcon name={LINK_ICONS[link.href] ?? "layers"} size={17} />
         </span>
         <span className="flex-1">{link.label}</span>
-        <KIcon name="arrowRight" size={15} className="text-[#1d3a5f]/30 transition group-hover:translate-x-0.5 group-hover:text-[#558c2b]" />
+        
       </Link>
     );
   }
@@ -116,6 +122,30 @@ export default function MobileMenu({
                 <p className="mb-2 px-2 text-[10px] font-black uppercase tracking-[0.18em] text-[#558c2b]">Main</p>
                 <div className="space-y-1">
                   {navigationLink({ href: "/dashboard", label: profileLabel })}
+                  {user && navigationLink({ href: "/dashboard?tab=settings", label: "Account settings" })}
+                  {user && role === "seller" && !sellerAccountReady && (
+                    <>
+                      {navigationLink({ href: "/register-seller", label: "Continue seller setup" })}
+                      <button
+                        type="button"
+                        disabled={cancelingSetup}
+                        onClick={() => {
+                          if (!window.confirm("Cancel seller setup and return to your buyer account?")) return;
+                          setCancelingSetup(true);
+                          void cancelSellerSetup()
+                            .then(() => setOpen(false))
+                            .catch((error: unknown) => window.alert(error instanceof Error ? error.message : "Could not cancel seller setup."))
+                            .finally(() => setCancelingSetup(false));
+                        }}
+                        className="group flex min-h-12 w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-extrabold text-[#10243e] transition hover:bg-white hover:shadow-sm disabled:opacity-60"
+                      >
+                        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-white text-[#558c2b] shadow-sm ring-1 ring-[#e7eef5]">
+                          <KIcon name="close" size={17} />
+                        </span>
+                        <span className="flex-1">{cancelingSetup ? "Cancelling…" : "Cancel seller setup"}</span>
+                      </button>
+                    </>
+                  )}
                   {navLinks.map(navigationLink)}
                 </div>
               </div>
@@ -134,13 +164,29 @@ export default function MobileMenu({
                       <KIcon name="shieldCheck" size={17} />
                     </span>
                     <span className="flex-1">Admin console</span>
-                    <KIcon name="arrowRight" size={15} className="text-[#1d3a5f]/30 transition group-hover:translate-x-0.5 group-hover:text-[#558c2b]" />
+                    
                   </Link>
                 </div>
               )}
             </nav>
 
             <div className="shrink-0 border-t border-[#e7eef5] px-5 pb-[max(1rem,env(safe-area-inset-bottom))] pt-3">
+              {user && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    void signOutNow().then(() => setOpen(false)).catch((error: unknown) => {
+                      alert(error instanceof Error ? error.message : "Could not sign out.");
+                    });
+                  }}
+                  className="mb-3 flex min-h-12 w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-extrabold text-red-700 transition hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#7ac142]"
+                >
+                  <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-white text-red-700 shadow-sm ring-1 ring-[#e7eef5]">
+                    <KIcon name="logOut" size={17} />
+                  </span>
+                  Sign out
+                </button>
+              )}
               <p className="text-center text-[11px] font-semibold text-[#1d3a5f]/45">{SITE_SHORT} · Connecting buyers and service providers</p>
             </div>
           </aside>

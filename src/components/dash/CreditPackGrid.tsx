@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { KIcon } from "@/lib/icons";
-import { CREDIT_PACKS, perCredit } from "@/lib/credits";
+import { CREDIT_PACKS } from "@/lib/credits";
 import { formatZAR } from "@/lib/plans";
 
 /**
@@ -43,7 +43,6 @@ export default function CreditPackGrid({ onBuy }: { onBuy: (packId: string) => v
             {p.credits}
             <span className="text-sm font-bold text-[#1d3a5f]/50"> credits</span>
           </p>
-          <p className="text-[11px] font-bold text-[#3c6b1d] mt-0.5">R{perCredit(p)} per credit</p>
           <p className="text-xs text-[#1d3a5f]/60 mt-1">{p.tagline}</p>
           <ul className="text-sm mt-4 space-y-2 flex-1 text-[#10243e]">
             {p.features.map((f) => (
@@ -58,7 +57,7 @@ export default function CreditPackGrid({ onBuy }: { onBuy: (packId: string) => v
             onClick={() => buy(p.id)}
             className={`mt-5 text-center text-sm font-extrabold rounded-full px-4 py-3 disabled:opacity-50 ${p.popular ? "btn-hippo" : "border-2 border-[#10243e] text-[#10243e] hover:bg-[#10243e] hover:text-white transition"}`}
           >
-            {busy === p.id ? "Starting…" : `Buy ${p.credits} credits →`}
+            {busy === p.id ? "Starting…" : `Buy ${p.credits} credits `}
           </button>
         </div>
       ))}

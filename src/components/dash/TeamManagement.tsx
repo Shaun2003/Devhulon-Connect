@@ -114,7 +114,7 @@ export default function TeamManagement() {
 
   if (!team?.canManage) {
     return (
-      <section className="space-y-5">
+      <section className="min-w-0 space-y-5">
         <div className="flex flex-wrap items-start gap-3">
           <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-[#e8f6d8] text-[#558c2b]">
             <KIcon name="profile" size={20} />
@@ -123,7 +123,7 @@ export default function TeamManagement() {
             <div className="flex flex-wrap items-center gap-2">
               <h2 className="text-lg font-black text-[#10243e]">Your team</h2>
               <span className="rounded-full bg-[#fff4d6] px-2.5 py-1 text-[10px] font-black uppercase tracking-wide text-[#805c0a]">
-                Business plan
+                Premium plan
               </span>
             </div>
             <p className="mt-1 text-sm leading-6 text-[#1d3a5f]/70">
@@ -137,7 +137,7 @@ export default function TeamManagement() {
               <KIcon name="shieldCheck" size={17} />
             </span>
             <div className="min-w-0 flex-1">
-              <p className="text-sm font-extrabold text-[#27461a]">Team access is a Business plan feature</p>
+              <p className="text-sm font-extrabold text-[#27461a]">Team access is a Premium feature</p>
               <p className="mt-1 text-sm leading-6 text-[#35522a]/80">
                 Invited sellers can manage shared listings after they accept. Billing, leads and buyer contacts stay private to the account owner.
               </p>
@@ -161,7 +161,7 @@ export default function TeamManagement() {
                   <KIcon name="profile" size={18} />
                 </span>
                 <div className="min-w-0 flex-1">
-                  <p className="text-sm font-extrabold text-[#10243e]">{invitation.ownerName || "A Devhulon Connect seller"}</p>
+                  <p className="text-sm font-extrabold text-[#10243e]">{invitation.ownerName || "A DevhulonConnect seller"}</p>
                   <p className="mt-1 text-xs leading-5 text-[#1d3a5f]/65">
                     Invited you as a {invitation.role === "manager" ? "Manager" : "Editor"} · Shared listing access starts after you accept.
                   </p>
@@ -193,7 +193,7 @@ export default function TeamManagement() {
                   <KIcon name="layers" size={18} />
                 </span>
                 <div className="min-w-0 flex-1">
-                  <p className="text-sm font-extrabold text-[#10243e]">{member.ownerName || "A Devhulon Connect seller"}</p>
+                  <p className="text-sm font-extrabold text-[#10243e]">{member.ownerName || "A DevhulonConnect seller"}</p>
                   <p className="mt-1 text-xs text-[#1d3a5f]/60">Shared listing access · {member.role === "manager" ? "Manager" : "Editor"}</p>
                 </div>
                 <button type="button" disabled={busy} onClick={() => void remove(member.ownerUid, member.memberUid)} className="min-h-10 rounded-xl border border-[#f0d9d9] px-3 py-2 text-xs font-bold text-red-700 transition hover:bg-red-50 disabled:opacity-50">Leave team</button>
@@ -210,7 +210,7 @@ export default function TeamManagement() {
   const pendingMembers = ownerRoster.filter((member) => member.status === "pending");
 
   return (
-    <section className="space-y-5">
+    <section className="min-w-0 space-y-5">
       <div className="flex flex-wrap items-start gap-3">
         <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-[#e8f6d8] text-[#558c2b]">
           <KIcon name="profile" size={20} />
@@ -218,7 +218,7 @@ export default function TeamManagement() {
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <h2 className="text-lg font-black text-[#10243e]">Your team</h2>
-            <span className="rounded-full bg-[#e8f6d8] px-2.5 py-1 text-[10px] font-black uppercase tracking-wide text-[#3c6b1d]">Business plan</span>
+            <span className="rounded-full bg-[#e8f6d8] px-2.5 py-1 text-[10px] font-black uppercase tracking-wide text-[#3c6b1d]">Premium plan</span>
           </div>
           <p className="mt-1 text-sm leading-6 text-[#1d3a5f]/70">Invite verified sellers to help manage your business listings. Billing, leads, buyer contacts and credits remain private to you.</p>
         </div>
@@ -250,37 +250,41 @@ export default function TeamManagement() {
           ))}
         </div>
       )}
-      <form onSubmit={invite} className="flex flex-wrap gap-2">
-        <input value={email} onChange={(event) => setEmail(event.target.value)} type="email" required maxLength={254} placeholder="Seller account email" className="min-w-[220px] flex-1 rounded-xl border-2 border-[#e7eef5] px-3 py-2 text-sm" />
-        <select value={role} onChange={(event) => setRole(event.target.value as "manager" | "editor")} className="rounded-xl border-2 border-[#e7eef5] px-3 py-2 text-sm" aria-label="Team role">
+      <form onSubmit={invite} className="grid min-w-0 gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,auto)_auto]">
+        <input value={email} onChange={(event) => setEmail(event.target.value)} type="email" required maxLength={254} placeholder="Seller account email" className="min-w-0 w-full rounded-xl border-2 border-[#e7eef5] px-3 py-2 text-sm" />
+        <select value={role} onChange={(event) => setRole(event.target.value as "manager" | "editor")} className="min-w-0 w-full rounded-xl border-2 border-[#e7eef5] px-3 py-2 text-sm" aria-label="Team role">
           <option value="editor">Editor — listing details</option>
           <option value="manager">Manager — all listing fields</option>
         </select>
-        <button type="submit" disabled={busy} className="btn-hippo min-h-11 text-sm disabled:opacity-50">{busy ? "Sending…" : "Send invitation"}</button>
+        <button type="submit" disabled={busy} className="btn-hippo min-h-11 w-full text-sm disabled:opacity-50 sm:w-auto">{busy ? "Sending…" : "Send invitation"}</button>
       </form>
-      <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-[#f2f6fa] px-3 py-2.5">
-        <p className="text-xs font-semibold text-[#1d3a5f]/70">{activeMembers.length} active · {pendingMembers.length} pending</p>
-        <p className="text-xs font-bold text-[#1d3a5f]/55">{team.limit === null ? "Unlimited seats" : `${activeMembers.length + pendingMembers.length} / ${team.limit ?? 0} seats used`}</p>
+      <div className="grid min-w-0 gap-1 rounded-xl bg-[#f2f6fa] px-3 py-2.5 sm:grid-cols-2 sm:items-center sm:justify-between sm:gap-2">
+        <p className="min-w-0 break-words text-xs font-semibold text-[#1d3a5f]/70">{activeMembers.length} active · {pendingMembers.length} pending</p>
+        <p className="min-w-0 break-words text-xs font-bold text-[#1d3a5f]/55 sm:text-right">{team.limit === null ? "Unlimited seats" : `${activeMembers.length + pendingMembers.length} / ${team.limit ?? 0} seats used`}</p>
       </div>
       <div className="space-y-3">
         {activeMembers.map((member) => (
-          <div key={member.id} className="flex flex-wrap items-center gap-3 rounded-2xl border border-[#e7eef5] bg-white p-4">
+          <div key={member.id} className="grid min-w-0 grid-cols-[2.5rem_minmax(0,1fr)] items-center gap-x-3 gap-y-2 rounded-2xl border border-[#e7eef5] bg-white p-4 sm:flex sm:items-center sm:gap-3">
             <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[#e8f6d8] text-[#558c2b]">
               <KIcon name="profile" size={18} />
             </span>
-            <span className="min-w-0 flex-1 text-sm font-extrabold text-[#10243e]">{member.name || member.email || "Team member"}</span>
-            <span className="rounded-full bg-[#e8f6d8] px-2.5 py-1 text-[10px] font-black uppercase tracking-wide text-[#3c6b1d]">{member.role === "manager" ? "Manager" : "Editor"} · Active</span>
-            <button type="button" disabled={busy} onClick={() => void remove(member.ownerUid, member.memberUid)} className="min-h-10 rounded-xl border border-[#f0d9d9] px-3 py-2 text-xs font-bold text-red-700 transition hover:bg-red-50 disabled:opacity-50">Remove</button>
+            <span className="min-w-0 break-words text-sm font-extrabold text-[#10243e] sm:w-auto sm:flex-1">{member.name || member.email || "Team member"}</span>
+            <span className="col-start-2 row-start-2 flex min-w-0 flex-wrap items-center gap-2 sm:contents">
+              <span className="max-w-full break-words rounded-full bg-[#e8f6d8] px-2.5 py-1 text-[10px] font-black uppercase tracking-wide text-[#3c6b1d]">{member.role === "manager" ? "Manager" : "Editor"} · Active</span>
+              <button type="button" disabled={busy} onClick={() => void remove(member.ownerUid, member.memberUid)} className="min-h-10 rounded-xl border border-[#f0d9d9] px-3 py-2 text-xs font-bold text-red-700 transition hover:bg-red-50 disabled:opacity-50">Remove</button>
+            </span>
           </div>
         ))}
         {pendingMembers.map((member) => (
-          <div key={member.id} className="flex flex-wrap items-center gap-3 rounded-2xl border border-dashed border-[#d6e1ec] bg-[#f8fafc] p-4">
+          <div key={member.id} className="grid min-w-0 grid-cols-[2.5rem_minmax(0,1fr)] items-center gap-x-3 gap-y-2 rounded-2xl border border-dashed border-[#d6e1ec] bg-[#f8fafc] p-4 sm:flex sm:items-center sm:gap-3">
             <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-white text-[#1d3a5f]/60 ring-1 ring-[#e7eef5]">
               <KIcon name="profile" size={18} />
             </span>
-            <span className="min-w-0 flex-1 text-sm font-extrabold text-[#10243e]">{member.name || member.email || "Invited seller"}</span>
-            <span className="rounded-full bg-[#fff4d6] px-2.5 py-1 text-[10px] font-black uppercase tracking-wide text-[#805c0a]">{member.role === "manager" ? "Manager" : "Editor"} · Pending</span>
-            <button type="button" disabled={busy} onClick={() => void remove(member.ownerUid, member.memberUid)} className="min-h-10 rounded-xl border border-[#d6e1ec] px-3 py-2 text-xs font-bold text-[#1d3a5f] transition hover:bg-white disabled:opacity-50">Cancel request</button>
+            <span className="min-w-0 break-words text-sm font-extrabold text-[#10243e] sm:w-auto sm:flex-1">{member.name || member.email || "Invited seller"}</span>
+            <span className="col-start-2 row-start-2 flex min-w-0 flex-wrap items-center gap-2 sm:contents">
+              <span className="max-w-full break-words rounded-full bg-[#fff4d6] px-2.5 py-1 text-[10px] font-black uppercase tracking-wide text-[#805c0a]">{member.role === "manager" ? "Manager" : "Editor"} · Pending</span>
+              <button type="button" disabled={busy} onClick={() => void remove(member.ownerUid, member.memberUid)} className="min-h-10 rounded-xl border border-[#d6e1ec] px-3 py-2 text-xs font-bold text-[#1d3a5f] transition hover:bg-white disabled:opacity-50">Cancel request</button>
+            </span>
           </div>
         ))}
         {ownerRoster.length === 0 && <p className="rounded-2xl border border-dashed border-[#d6e1ec] bg-[#f8fafc] px-4 py-5 text-sm text-[#1d3a5f]/60">No team members or pending requests yet. Send an invitation to get started.</p>}

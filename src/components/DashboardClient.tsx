@@ -9,6 +9,7 @@ import {
   subscribeMyBusinesses, subscribeLeadsInbox,
   subscribeMyClaims, subscribeMySubscription, useRealtime,
 } from "@/lib/realtime";
+import { DashboardSkeleton } from "@/components/dash/parts";
 
 function Section({ title, children, live }: { title: string; children: ReactNode; live: boolean }) {
   return (
@@ -45,10 +46,10 @@ export default function DashboardClient() {
       <div className="max-w-3xl mx-auto px-4 py-10">
         <h1 className="text-3xl font-black">Owner dashboard</h1>
         <p className="text-sm text-zinc-600 mt-2">Add your NEXT_PUBLIC_FIREBASE_* vars to .env.local and restart npm run dev.</p>
-        <Link href="/advertise" className="inline-block mt-4 rounded-xl bg-green-800 text-white text-sm font-bold px-4 py-2.5">See Starter / Professional / Business plans</Link>
+        <Link href="/pricing" className="inline-block mt-4 rounded-xl bg-green-800 text-white text-sm font-bold px-4 py-2.5">See Starter and Premium plans</Link>
       </div>
     );
-  if (loading) return <p className="max-w-3xl mx-auto px-4 py-10 text-sm">Loading...</p>;
+  if (loading) return <DashboardSkeleton title="Loading your owner dashboard" />;
   if (!user)
     return (
       <div className="max-w-3xl mx-auto px-4 py-10 space-y-3">
@@ -68,18 +69,18 @@ export default function DashboardClient() {
       <div className="grid md:grid-cols-2 gap-4">
         <Section title={`My listings (${biz.rows.length})`} live={biz.live}>
           {biz.rows.length === 0 ? <p className="text-sm text-zinc-500">No listings yet. <Link className="underline" href="/list-business">List your business</Link>.</p> :
-            <ul className="text-sm space-y-2">{biz.rows.map((b, i) => <li key={i} className="rounded-xl border p-3"><b>{String((b as { name?: string }).name ?? "Listing")}</b></li>)}</ul>}
+            <ul className="text-sm space-y-2">{biz.rows.map((b, i) => <li key={i} className="rounded-xl border p-3"><b>{String((b as { name: string }).name ?? "Listing")}</b></li>)}</ul>}
         </Section>
         <Section title={`Leads inbox (${leads.rows.length})`} live={leads.live}>
           {leads.rows.length === 0 ? <p className="text-sm text-zinc-500">No leads yet.</p> :
             <ul className="text-sm space-y-2">{leads.rows.map((l, i) => {
-              const lid = String((l as { id?: string }).id ?? "");
-              const st = String((l as { status?: string }).status ?? "new");
+              const lid = String((l as { id: string }).id ?? "");
+              const st = String((l as { status: string }).status ?? "new");
               const busy = acting === lid + "accepted" || acting === lid + "declined";
               return (
                 <li key={i} className="rounded-xl border p-3">
-                  <p><b>{String((l as { need?: string }).need ?? "Quote request")}</b></p>
-                  <p className="text-xs text-zinc-500 mt-0.5">{String((l as { phone?: string }).phone ?? "")} - {st}</p>
+                  <p><b>{String((l as { need: string }).need ?? "Quote request")}</b></p>
+                  <p className="text-xs text-zinc-500 mt-0.5">{String((l as { phone: string }).phone ?? "")} - {st}</p>
                   <div className="flex gap-2 mt-2">
                     <button disabled={busy || !lid} onClick={() => act(lid, "accepted")} className="rounded-lg bg-green-800 text-white text-xs font-bold px-3 py-1.5 disabled:opacity-50">Accept</button>
                     <button disabled={busy || !lid} onClick={() => act(lid, "declined")} className="rounded-lg border text-xs font-bold px-3 py-1.5 disabled:opacity-50">Decline</button>
@@ -90,13 +91,13 @@ export default function DashboardClient() {
         </Section>
         <Section title={`My claims (${claims.rows.length})`} live={claims.live}>
           {claims.rows.length === 0 ? <p className="text-sm text-zinc-500">No listing claims yet.</p> :
-            <ul className="text-sm space-y-2">{claims.rows.map((c, i) => <li key={i} className="rounded-xl border p-3">{String((c as { name?: string }).name ?? "Claim")}</li>)}</ul>}
+            <ul className="text-sm space-y-2">{claims.rows.map((c, i) => <li key={i} className="rounded-xl border p-3">{String((c as { name: string }).name ?? "Claim")}</li>)}</ul>}
         </Section>
         <Section title="Subscription" live={subs.live}>
           {subs.rows.length === 0 ? (
-            <p className="text-sm text-zinc-500">You are on FREE. <Link className="underline font-bold" href="/advertise">Upgrade to PRO R199 or PREMIUM R499</Link>.</p>
+            <p className="text-sm text-zinc-500">You are on Starter. <Link className="underline font-bold" href="/pricing">Compare Starter and Premium plans</Link>.</p>
           ) : (
-            <ul className="text-sm space-y-2">{subs.rows.map((s, i) => <li key={i} className="rounded-xl border p-3">Plan <b>{String((s as { plan?: string }).plan ?? "")}</b></li>)}</ul>
+            <ul className="text-sm space-y-2">{subs.rows.map((s, i) => <li key={i} className="rounded-xl border p-3">Plan <b>{String((s as { plan: string }).plan ?? "")}</b></li>)}</ul>
           )}
         </Section>
       </div>

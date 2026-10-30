@@ -39,8 +39,8 @@ export default function SupportPanel({ plan }: { plan: string }) {
     <section className="space-y-4">
       <div className="rounded-xl border border-[#e7eef5] bg-[#f8fafc] p-3 text-sm text-[#1d3a5f]/75">
         {priority
-          ? "Your requests are marked as Business priority for the support team. No response-time guarantee is implied."
-          : `Send a support request to the ${SITE_SHORT} team. Business plan requests are marked as priority.`}
+          ? "Your requests are marked as Premium priority for the support team. No response-time guarantee is implied."
+          : `Send a support request to the ${SITE_SHORT} team. Premium plan requests are marked as priority.`}
       </div>
       {error && <p role="alert" className="rounded-xl bg-red-50 p-3 text-sm text-red-800">{error}</p>}
       {message && <p role="status" className="rounded-xl bg-green-50 p-3 text-sm text-green-800">{message}</p>}

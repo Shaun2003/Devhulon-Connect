@@ -13,8 +13,8 @@ import {
   subscribeMySubscription,
 } from "@/lib/realtime";
 import { unlockLead, buyCreditPack } from "@/lib/repo";
-import { creditPriceFor, LEAD_TIER_LABEL } from "@/lib/credits";
-import { formatZAR, subscriptionIsEntitled } from "@/lib/plans";
+import { creditPriceFor, LEAD_TIER_CREDITS, LEAD_TIER_LABEL, tierForLead } from "@/lib/credits";
+import { formatZAR, normalizePlanId, subscriptionIsEntitled } from "@/lib/plans";
 import { Panel, EmptyLine, ErrorNote } from "@/components/dash/parts";
 import CreditPackGrid from "@/components/dash/CreditPackGrid";
 
@@ -60,18 +60,26 @@ export default function LeadMarketplace() {
   // unlockLeadContact, so the UI gate and the enforcement can never disagree.
   const subs = useRealtime<Row>((cb, onErr) => (uid ? subscribeMySubscription(uid, cb as never, onErr) : () => {}), [], [uid]);
   const subDoc = (subs.rows[0] ?? {}) as {
+    plan?: string;
     subscription_status?: string;
     status?: string;
     current_period_end?: string | null;
     cancel_at_period_end?: boolean;
+    leads_used?: number;
   };
-  const entitled = subscriptionIsEntitled({
+  const premiumActive = normalizePlanId(subDoc.plan) === "premium" && subscriptionIsEntitled({
+    plan: "premium",
     status: subDoc.subscription_status ?? subDoc.status,
     periodEnd: subDoc.current_period_end,
     cancelAtPeriodEnd: subDoc.cancel_at_period_end,
   });
+  const effectivePlan = premiumActive ? "premium" : "starter";
+  const entitled = true;
 
   const balance = Number(wallet.rows[0]?.balance ?? 0);
+  const subscriptionBalance = Number(wallet.rows[0]?.subscriptionBalance ?? 0);
+  const purchasedBalance = Number(wallet.rows[0]?.purchasedBalance ?? balance);
+  const starterLimitReached = effectivePlan === "starter" && Number(subDoc.leads_used ?? 0) >= 3;
   const unlockedIds = new Set(unlocks.rows.flatMap((u) => [
     String(u.leadId ?? ""),
     String(u.requestId ?? ""),
@@ -117,19 +125,16 @@ export default function LeadMarketplace() {
 
   return (
     <div className="space-y-5">
-      {/* PREMIUM CATALOGUE GATE — before anything renders, the subscription is
-          checked. Free/stall sellers see WHY the marketplace is closed and a
-          single upgrade path, never the packs or the feed (the feed itself is
-          safe server-side too: unlockLeadContact refuses without entitlement). */}
+      {/* Starter can browse and unlock eligible leads; Premium only removes the
+          monthly opportunity cap and adds seller tools. */}
       {!entitled && (
         <div className="hippo-card p-6 text-center space-y-3">
           <span className="icon-3d icon-3d-sm mx-auto"><KIcon name="lock" size={20} /></span>
-          <h2 className="font-black text-[#10243e]">The lead catalogue is part of your subscription</h2>
+          <h2 className="font-black text-[#10243e]">Your Premium access has ended</h2>
           <p className="text-sm text-[#1d3a5f]/70 max-w-md mx-auto">
-            Open buyer requests, contact details and credit packs are unlocked with an active plan.
-            Upgrade to start browsing live requests and contacting buyers.
+            Your account is on Starter. Your listing, existing conversations and purchased credits remain available.
           </p>
-          <Link href="/list-business" className="btn-hippo text-sm inline-flex">View plans & upgrade →</Link>
+          <Link href="/pricing" className="btn-hippo text-sm inline-flex">View Premium </Link>
         </div>
       )}
 
@@ -145,10 +150,22 @@ export default function LeadMarketplace() {
               {balance}
               <span className="text-sm font-bold text-[#1d3a5f]/50"> available credits</span>
             </p>
+            <p className="mt-1 text-xs text-[#1d3a5f]/60">
+              {subscriptionBalance} monthly · {purchasedBalance} purchased
+            </p>
           </div>
         </div>
+        {effectivePlan === "starter" && (
+          <div className="hippo-card px-5 py-4 flex flex-wrap items-center justify-between gap-3 text-sm">
+            <p className="text-[#1d3a5f]/75">
+              Starter opportunities: <b className="text-[#10243e]">{Math.min(3, Number(subDoc.leads_used ?? 0))}/3</b> this allocation period.
+              Buying credits does not change this limit.
+            </p>
+            {starterLimitReached && <Link href="/pricing" className="font-extrabold text-[#558c2b] hover:underline">Upgrade to Premium </Link>}
+          </div>
+        )}
         <button onClick={() => setShowPacks((s) => !s)} className="btn-hippo text-sm">
-          {showPacks ? "Hide credit packs" : "Buy credits →"}
+          {showPacks ? "Hide credit packs" : "Buy credits "}
         </button>
       </div>
 
@@ -158,36 +175,29 @@ export default function LeadMarketplace() {
       {showPacks && (
         <Panel title="Buy credits" live={false}>
           <p className="text-sm text-[#1d3a5f]/70 mb-3">
-            Credits stay in your seller wallet and are spent only when you unlock a buyer&apos;s contact details. Browsing leads is free; there is no charge when a buyer chooses another seller.
+            Monthly plan credits expire at the next allocation and do not roll over. Purchased credits remain available until spent. Credits are charged only when you unlock a genuine buyer request.
           </p>
           <details className="mb-4 rounded-xl border border-[#e7eef5] bg-[#f8fafc] p-4">
             <summary className="cursor-pointer text-sm font-extrabold text-[#10243e]">
               Credit pricing information
             </summary>
             <div className="mt-3 space-y-3 text-sm text-[#1d3a5f]/75">
-              <p>
-                The credit cost is shown on each lead before you unlock it. The server checks the price and your balance, then deducts credits once when you choose to reveal the buyer&apos;s contact details.
-              </p>
+              <p>Each buyer contact unlock uses credits. The required credit amount is shown before you reveal a buyer&apos;s contact details.</p>
               <ul className="grid gap-2 sm:grid-cols-2">
-                <li className="rounded-xl bg-white p-3">
-                  <span className="block font-black text-[#10243e]">5 credits</span>
-                  Small job · buyer budget under R3,000
-                </li>
-                <li className="rounded-xl bg-white p-3">
-                  <span className="block font-black text-[#10243e]">12 credits</span>
-                  Standard job · buyer budget R3,000–R14,999
-                </li>
-                <li className="rounded-xl bg-white p-3">
-                  <span className="block font-black text-[#10243e]">25 credits</span>
-                  Large project · buyer budget R15,000–R49,999 or estimated large from the job description
-                </li>
-                <li className="rounded-xl bg-white p-3">
-                  <span className="block font-black text-[#10243e]">40 credits</span>
-                  Major project · buyer budget R50,000+
-                </li>
+                {([
+                  ["small", "Small job · buyer budget under R3,000"],
+                  ["standard", "Standard job · buyer budget R3,000–R14,999"],
+                  ["large", "Large project · buyer budget R15,000–R49,999 or estimated large from the job description"],
+                  ["major", "Major project · buyer budget R50,000+"],
+                ] as const).map(([tier, description]) => (
+                  <li key={tier} className="rounded-xl bg-white p-3">
+                    <span className="block font-black text-[#10243e]">{LEAD_TIER_CREDITS[tier]} credits to unlock</span>
+                    {description}
+                  </li>
+                ))}
               </ul>
               <p className="text-xs">
-                If the buyer doesn&apos;t enter a budget, the job description is used to estimate its tier. Your subscription gives access to the lead catalogue; credits are separate and pay for contact unlocks.
+                If the buyer doesn&apos;t enter a budget, the job description is used to estimate its tier. Your subscription gives access to the lead catalogue; purchased credits are separate and pay for contact unlocks.
               </p>
             </div>
           </details>
@@ -207,7 +217,7 @@ export default function LeadMarketplace() {
               const requestId = String(l.requestId ?? lid);
               const alreadyUnlocked = unlockedIds.has(lid) || unlockedIds.has(requestId) || Boolean(revealed[lid]);
               const price = creditPriceFor(l as Parameters<typeof creditPriceFor>[0]);
-              const tier = price === 5 ? "small" : price === 12 ? "standard" : price === 25 ? "large" : "major";
+              const tier = tierForLead(l as Parameters<typeof tierForLead>[0]);
               return (
                 <article key={lid || i} className="rounded-2xl border border-[#e7eef5] p-4">
                   <div className="flex flex-wrap items-start gap-2 justify-between">
@@ -231,8 +241,10 @@ export default function LeadMarketplace() {
                       )}
                     </div>
                     <div className="text-right shrink-0">
-                      <p className="text-lg font-black text-[#10243e]">{price}</p>
-                      <p className="text-[10px] font-bold text-[#1d3a5f]/55 uppercase">credits</p>
+                      <p className="text-lg font-black leading-tight text-[#10243e]">
+                        {price}
+                        <span className="block text-xs font-bold text-[#1d3a5f]/60">credits</span>
+                      </p>
                     </div>
                   </div>
 
@@ -249,10 +261,10 @@ export default function LeadMarketplace() {
                       </div>
                       <div className="flex gap-3 mt-2">
                         {revealed[lid].conversationId && (
-                          <Link href={`/messages?c=${encodeURIComponent(revealed[lid].conversationId)}`} className="text-xs font-bold text-[#558c2b] hover:underline">Open conversation →</Link>
+                          <Link href={`/messages?c=${encodeURIComponent(revealed[lid].conversationId)}`} className="text-xs font-bold text-[#558c2b] hover:underline">Open conversation </Link>
                         )}
                         {revealed[lid].phone && (
-                          <a href={`tel:${revealed[lid].phone}`} className="text-xs font-bold text-[#558c2b] hover:underline">Call now →</a>
+                          <a href={`tel:${revealed[lid].phone}`} className="text-xs font-bold text-[#558c2b] hover:underline">Call now </a>
                         )}
                       </div>
                     </div>

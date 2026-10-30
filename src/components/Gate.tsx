@@ -72,7 +72,7 @@ export default function Gate({ children, seller = false }: { children: ReactNode
         <h2 className="text-3xl font-black text-[#10243e]">Become a seller</h2>
         <p className="text-[#1d3a5f]/70 mt-3">List and manage businesses on {SITE_SHORT} — starts FREE.</p>
         <Link href="/register-seller" className="btn-hippo mt-6 inline-flex">
-          Register as seller →
+          Register as seller 
         </Link>
         <p className="text-xs text-[#1d3a5f]/50 mt-3">Your buyer features stay available in <Link href="/dashboard" className="font-bold text-[#558c2b] hover:underline">your dashboard</Link>.</p>
       </div>
@@ -92,7 +92,7 @@ export default function Gate({ children, seller = false }: { children: ReactNode
         <p className="font-extrabold text-[#10243e] text-lg mt-2">I&apos;m a Seller</p>
         <p className="text-sm text-[#1d3a5f]/70 mt-1">List my business &amp; get leads. Starts FREE — upgrade when the phone rings.</p>
         <button onClick={() => setShowModal(true)} className="btn-hippo w-full mt-4 text-sm">
-          Sign in as Seller →
+          Sign in as Seller 
         </button>
       </div>
       <p className="text-xs text-[#1d3a5f]/50 text-center mt-6">

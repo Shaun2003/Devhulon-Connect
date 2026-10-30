@@ -14,6 +14,7 @@ import { KIcon, type IconKey } from "@/lib/icons";
 import { SignInInline } from "@/components/dash/parts";
 import { SITE_SHORT } from "@/lib/site";
 import { triggerNotificationEmailAsync } from "@/components/notification-email";
+import { PageHero } from "@/components/ui";
 
 type Row = Record<string, unknown>;
 
@@ -92,9 +93,21 @@ export default function NotificationsClient() {
 
   if (loading) {
     return (
-      <div className="max-w-3xl mx-auto px-4 py-20 text-center">
-        <div className="inline-block w-8 h-8 border-4 border-[#7ac142] border-t-transparent rounded-full animate-spin" />
-        <p className="text-sm text-[#1d3a5f]/60 mt-3">Loading your notifications…</p>
+      <div className="min-h-screen">
+        <PageHero kicker="Notification centre" title="Your notifications" sub="New leads and updates across your requests, quotes, reviews, bookings and messages." />
+        <main className="mx-auto max-w-6xl animate-pulse space-y-3 px-4 py-8 sm:px-6" role="status" aria-label="Loading your notifications">
+          <span className="sr-only">Loading your notifications</span>
+          {[0, 1, 2, 3, 4].map((item) => (
+            <div key={item} className="hippo-card flex items-center gap-4 p-4">
+              <div className="h-10 w-10 shrink-0 rounded-full bg-[#e7eef5]" />
+              <div className="min-w-0 flex-1 space-y-2">
+                <div className="h-4 w-2/3 rounded bg-[#d6e1ec]" />
+                <div className="h-3 w-1/2 rounded bg-[#f2f6fa]" />
+              </div>
+              <div className="h-3 w-16 rounded bg-[#f2f6fa]" />
+            </div>
+          ))}
+        </main>
       </div>
     );
   }
@@ -116,94 +129,94 @@ export default function NotificationsClient() {
   }
 
   return (
-    <div className="max-w-3xl mx-auto px-4 py-8">
-      <header className="flex flex-wrap items-end justify-between gap-3 mb-5">
-        <div className="min-w-0">
-          <p className="text-xs font-extrabold uppercase tracking-[0.16em] text-[#558c2b]">
-            Notification centre {nots.live && <span className="chip-live ml-1">Live</span>}
-          </p>
-          <h1 className="text-2xl sm:text-3xl font-black text-[#10243e]">Your notifications</h1>
-          <p className="text-sm text-[#1d3a5f]/70 mt-1">
-            New leads and updates across your requests, quotes, reviews, bookings and messages.
-          </p>
+    <div className="min-h-screen">
+      <PageHero
+        kicker="Notification centre"
+        title="Your notifications"
+        sub="New leads and updates across your requests, quotes, reviews, bookings and messages."
+      >
+        <div className="flex min-w-0 flex-col gap-3">
+          {nots.live && <span className="chip-live w-fit">Live</span>}
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={() => setFilter((f) => (f === "all" ? "unread" : "all"))}
+              className="text-xs font-bold rounded-full border-2 border-white/50 text-white px-3.5 py-1.5 hover:bg-white hover:text-[#10243e] transition"
+              aria-pressed={filter === "unread"}
+            >
+              {filter === "all" ? `Unread only (${unread.length})` : "Show all"}
+            </button>
+            <button
+              disabled={busy || unread.length === 0}
+              onClick={() => run(() => markAllNotificationsRead(unread.map((n) => String(n.id ?? ""))))}
+              className="text-xs font-bold rounded-full border-2 border-white/30 text-white px-3.5 py-1.5 hover:bg-white/10 transition disabled:opacity-50"
+            >
+              Mark all read
+            </button>
+            <button
+              disabled={busy || all.length === 0}
+              onClick={() => {
+                if (confirm(`Delete all ${all.length} notification${all.length === 1 ? "" : "s"}? This can't be undone.`)) {
+                  run(() => clearNotifications(ids));
+                }
+              }}
+              className="text-xs font-bold rounded-full border-2 border-red-200/70 text-red-100 px-3.5 py-1.5 hover:bg-red-500/20 transition disabled:opacity-50"
+            >
+              Clear all
+            </button>
+            <label className="flex items-center gap-2 text-xs font-bold text-white/80 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={emailForMe}
+                onChange={(e) => setEmailForMe(e.target.checked)}
+                aria-label="Email me about notifications"
+                className="rounded border-white/50 text-[#10243e] focus:ring-[#7ac142]"
+              />
+              Email me
+            </label>
+          </div>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <button
-            onClick={() => setFilter((f) => (f === "all" ? "unread" : "all"))}
-            className="text-xs font-bold rounded-full border-2 border-[#10243e] text-[#10243e] px-3.5 py-1.5 hover:bg-[#10243e] hover:text-white transition"
-            aria-pressed={filter === "unread"}
-          >
-            {filter === "all" ? `Unread only (${unread.length})` : "Show all"}
-          </button>
-          <button
-            disabled={busy || unread.length === 0}
-            onClick={() => run(() => markAllNotificationsRead(unread.map((n) => String(n.id ?? ""))))}
-            className="text-xs font-bold rounded-full border-2 border-[#e7eef5] text-[#10243e] px-3.5 py-1.5 hover:bg-[#f2f6fa] transition disabled:opacity-50"
-          >
-            Mark all read
-          </button>
-          <button
-            disabled={busy || all.length === 0}
-            onClick={() => {
-              if (confirm(`Delete all ${all.length} notification${all.length === 1 ? "" : "s"}? This can't be undone.`)) {
-                run(() => clearNotifications(ids));
-              }
-            }}
-            className="text-xs font-bold rounded-full border-2 border-red-200 text-red-700 px-3.5 py-1.5 hover:bg-red-50 transition disabled:opacity-50"
-          >
-            Clear all
-          </button>
-          <label className="flex items-center gap-2 text-xs font-bold text-[#1d3a5f]/70 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={emailForMe}
-              onChange={(e) => setEmailForMe(e.target.checked)}
-              aria-label="Email me about notifications"
-              className="rounded border-[#1d3a5f] text-[#10243e] focus:ring-[#7ac142]"
-            />
-            Email me
-          </label>
-        </div>
-      </header>
+      </PageHero>
 
-      {err && (
-        <p className="mb-3 text-sm font-bold text-red-700 bg-red-50 rounded-2xl px-4 py-3">{err}</p>
-      )}
-      {!err && nots.error && (
-        <p className="mb-3 text-sm font-bold text-[#a36508] bg-[#fff4d6] rounded-2xl px-4 py-3">
-          {listenerHint(nots.error as RealtimeError)}
-        </p>
-      )}
-
-      {visible.length === 0 ? (
-        <div className="hippo-card p-10 text-center">
-          <span className="icon-3d icon-3d-sm mx-auto" aria-hidden="true">
-            <KIcon name="bell" size={24} />
-          </span>
-          <h2 className="text-lg font-black text-[#10243e] mt-3">
-            {filter === "unread" ? "You're all caught up" : "Nothing yet"}
-          </h2>
-          <p className="text-sm text-[#1d3a5f]/70 mt-1 max-w-md mx-auto">
-            {filter === "unread"
-              ? "Every notification has been read. Switch back to “Show all” to browse the history."
-              : "New matched leads, quote replies, review responses, booking updates and messages will land here the moment they happen."}
+      <main className="max-w-6xl mx-auto px-4 py-8">
+        <div className="max-w-3xl">
+        {err && (
+          <p className="mb-3 text-sm font-bold text-red-700 bg-red-50 rounded-2xl px-4 py-3">{err}</p>
+        )}
+        {!err && nots.error && (
+          <p className="mb-3 text-sm font-bold text-[#a36508] bg-[#fff4d6] rounded-2xl px-4 py-3">
+            {listenerHint(nots.error as RealtimeError)}
           </p>
-        </div>
-      ) : (
-        <ul className="space-y-2">
-          {visible.map((n, i) => {
-            const id = String(n.id ?? i);
-            const type = String(n.type ?? "");
-            const isRead = Boolean(n.read);
-            const href = n.href ? String(n.href) : null;
-            const bizId = n.businessId ? String(n.businessId) : null;
-            const when = timeAgo(n.createdAt);
-            return (
-              <li
-                key={id}
-                className={`hippo-card p-4 anim-rise ${isRead ? "" : "border-2 border-[#7ac142]"}`}
-                style={{ "--d": `${Math.min(i, 8) * 45}ms` } as React.CSSProperties}
-              >
+        )}
+
+        {visible.length === 0 ? (
+          <div className="hippo-card p-10 text-center">
+            <span className="icon-3d icon-3d-sm mx-auto" aria-hidden="true">
+              <KIcon name="bell" size={24} />
+            </span>
+            <h2 className="text-lg font-black text-[#10243e] mt-3">
+              {filter === "unread" ? "You're all caught up" : "Nothing yet"}
+            </h2>
+            <p className="text-sm text-[#1d3a5f]/70 mt-1 max-w-md mx-auto">
+              {filter === "unread"
+                ? "Every notification has been read. Switch back to “Show all” to browse the history."
+                : "New matched leads, quote replies, review responses, booking updates and messages will land here the moment they happen."}
+            </p>
+          </div>
+        ) : (
+          <ul className="space-y-2">
+            {visible.map((n, i) => {
+              const id = String(n.id ?? i);
+              const type = String(n.type ?? "");
+              const isRead = Boolean(n.read);
+              const href = n.href ? String(n.href) : null;
+              const bizId = n.businessId ? String(n.businessId) : null;
+              const when = timeAgo(n.createdAt);
+              return (
+                <li
+                  key={id}
+                  className={`hippo-card p-4 anim-rise ${isRead ? "" : "border-2 border-[#7ac142]"}`}
+                  style={{ "--d": `${Math.min(i, 8) * 45}ms` } as React.CSSProperties}
+                >
                 <div className="flex items-start gap-3">
                   <span
                     className={`shrink-0 w-9 h-9 grid place-items-center rounded-xl ${
@@ -268,7 +281,7 @@ export default function NotificationsClient() {
                           onClick={() => !isRead && markNotificationRead(id).catch(() => {})}
                           className="text-xs font-bold text-[#558c2b] hover:underline"
                         >
-                          Open →
+                          Open 
                         </Link>
                       )}
                       {bizId && (
@@ -295,12 +308,13 @@ export default function NotificationsClient() {
                     </div>
                   </div>
                 </div>
-              </li>
-            );
-          })}
-        </ul>
-      )}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+        </div>
+      </main>
     </div>
   );
 }
-

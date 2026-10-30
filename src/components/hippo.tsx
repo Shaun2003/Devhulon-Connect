@@ -67,28 +67,30 @@ export function Faq({ items }: { items: { q: string; a: string }[] }) {
 /** Big Hippo-style CTA band above footer. */
 export function CtaBand() {
   return (
-    <div className="hippo-hero rounded-3xl p-6 sm:p-10 text-white flex flex-col lg:flex-row lg:items-center gap-6 overflow-hidden anim-rise">
+    <div className="hippo-hero rounded-3xl p-6 sm:p-10 text-white grid gap-8 overflow-hidden anim-rise lg:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)] lg:items-center">
       <div className="flex-1">
-        <p className="text-xs font-extrabold uppercase tracking-[0.18em] text-[#ffc72c]">Free · 60 seconds · No spam</p>
-        <h2 className="text-2xl sm:text-4xl font-black tracking-tight mt-2">One request. Up to 3 local quotes. Zero phonecalls wasted.</h2>
-        <p className="text-white/75 mt-2 text-sm sm:text-base max-w-xl">Tell us what you need and where — matched plumbers, mechanics, tutors, cleaners &amp; other providers may respond with their own prices for you to compare.</p>
+        <p className="text-xs font-extrabold uppercase tracking-[0.18em] text-[#ffc72c]">Free · about 60 seconds · no spam</p>
+        <h2 className="text-2xl sm:text-4xl font-black tracking-tight mt-2">One request. Up to 3 local quotes.</h2>
+        <p className="text-white/75 mt-2 text-sm sm:text-base max-w-xl">Tell us what you need and where. Up to three matched local providers may reply with prices to compare. We share your contact details only for this request and with your consent.</p>
         <div className="mt-5 flex flex-wrap gap-2">
-          <Link href="/request-quote" className="btn-hippo">Compare quotes — free →</Link>
+          <Link href="/request-quote" className="btn-hippo">Compare quotes — free </Link>
           <Link href="/services" className="inline-flex items-center rounded-full border-2 border-white/40 px-6 py-3 font-bold text-sm hover:bg-white/10">Browse all services</Link>
         </div>
       </div>
-      <div className="lg:w-80 shrink-0 grid grid-cols-3 lg:col-span-1 gap-2 items-start">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 lg:grid-cols-1">
         {[
-          ["users", "Who gets contacted", "Up to 3"],
-          ["badgeCheck", "Seller profiles", "Details provided by sellers"],
-          ["lock", "Your number shared", "Only for this job"],
+          ["users", "Who may contact you", "Up to 3 matched sellers"],
+          ["badgeCheck", "Compare responses", "Prices from local pros"],
+          ["lock", "Your contact details", "Only for this request"],
         ].map(([ic, k, v]) => (
-          <div key={k} className="rounded-2xl bg-white/10 border border-white/15 p-4 text-center lg:text-left">
-            <span className="icon-3d icon-3d-sm mx-auto lg:mx-0" aria-hidden>
+          <div key={k} className="flex items-center gap-3 rounded-2xl bg-white/10 border border-white/15 p-4 text-left">
+            <span className="icon-3d icon-3d-sm shrink-0" aria-hidden>
               <KIcon name={ic as IconKey} size={18} />
             </span>
-            <p className="font-black text-lg mt-2">{v}</p>
-            <p className="text-xs text-white/65">{k}</p>
+            <div className="min-w-0">
+              <p className="text-xs text-white/65">{k}</p>
+              <p className="font-black text-sm sm:text-base mt-1">{v}</p>
+            </div>
           </div>
         ))}
       </div>

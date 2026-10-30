@@ -2,10 +2,8 @@ import { KIcon } from "@/lib/icons";
 import { Fragment } from "react";
 import Link from "next/link";
 import type { Business } from "@/data/businesses";
-import { waLink } from "@/lib/utils";
 import { RatingSummary, Badge } from "@/components/ui";
 import { normalizePlanId } from "@/lib/plans";
-import { SITE_SHORT } from "@/lib/site";
 
 /**
  * Hippo-style side-by-side comparison matrix for a suburb+category.
@@ -42,13 +40,12 @@ export default function ComparisonTable({
           <div key="h-svc" className={`${head} bg-[#10243e] text-white`}>Services</div>
           <div key="h-price" className={`${head} bg-[#10243e] text-white`}>Price point</div>
           <div key="h-hrs" className={`${head} bg-[#10243e] text-white`}>Hours</div>
-          <div key="h-cta" className={`${head} bg-[#10243e] text-white`}>Contact</div>
+          <div key="h-cta" className={`${head} bg-[#10243e] text-white`}>Next step</div>
 
           {list.map((b) => {
             const plan = normalizePlanId(b.plan);
-            const business = plan === "business";
-            const pro = plan === "professional";
-            const rowBg = business ? "bg-[#f3f9ec]" : b.verified ? "bg-[#fbfdf8]" : "bg-white";
+            const premium = plan === "premium";
+            const rowBg = premium ? "bg-[#f3f9ec]" : b.verified ? "bg-[#fbfdf8]" : "bg-white";
             return (
               <Fragment key={b.id}>
                 <div className={`${cell} ${rowBg} border-t border-[#e7eef5]`}>
@@ -57,8 +54,7 @@ export default function ComparisonTable({
                   </Link>
                   <div className="flex flex-wrap gap-1 mt-1.5">
                     {b.verified && <Badge><KIcon name="check" size={14} className="inline shrink-0" /> Verified</Badge>}
-                    {business && <span className="whitespace-nowrap text-[9px] font-black uppercase tracking-widest bg-[#10243e] text-[#ffc72c] rounded-full px-2 py-0.5">Business sponsored</span>}
-                    {pro && <span className="whitespace-nowrap text-[9px] font-black uppercase tracking-widest bg-[#e8f6d8] text-[#3c6b1d] rounded-full px-2 py-0.5">Professional</span>}
+                    {premium && <span className="whitespace-nowrap text-[9px] font-black uppercase tracking-widest bg-[#e8f6d8] text-[#3c6b1d] rounded-full px-2 py-0.5">Premium</span>}
                     {b.featured && <span className="whitespace-nowrap text-[9px] font-black uppercase tracking-widest bg-[#e8f6d8] text-[#3c6b1d] rounded-full px-2 py-0.5">Featured</span>}
                   </div>
                 </div>
@@ -84,11 +80,7 @@ export default function ComparisonTable({
                 </div>
 
                 <div className={`${cell} ${rowBg} border-t border-[#e7eef5] space-y-2`}>
-                  <a href={`tel:${b.phone.replace(/\s/g, "")}`} className="block text-center text-xs font-extrabold rounded-lg border-2 border-[#10243e] text-[#10243e] px-2 py-1.5 hover:bg-[#10243e] hover:text-white transition">Call</a>
-                  {b.whatsapp && (
-                    <a target="_blank" rel="noreferrer" href={waLink(b.whatsapp, `Hi ${b.name}, I found you on ${SITE_SHORT}. I need help with…`)} className="block text-center text-xs font-extrabold rounded-lg bg-[#25D366] text-white px-2 py-1.5 hover:brightness-95">WhatsApp</a>
-                  )}
-                  <Link href={`/request-quote?business=${b.id}`} className="block text-center text-xs font-extrabold rounded-lg bg-[#7ac142] text-[#0b1e33] px-2 py-1.5 hover:bg-[#68ad35]">Quote</Link>
+                  <Link href={`/request-quote?business=${b.id}`} className="block text-center text-xs font-extrabold rounded-lg bg-[#7ac142] text-[#0b1e33] px-2 py-1.5 hover:bg-[#68ad35]">Request a quote</Link>
                 </div>
               </Fragment>
             );

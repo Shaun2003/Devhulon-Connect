@@ -3,13 +3,13 @@
    user-supplied remote URLs; next/image needs a remotePatterns whitelist per
    host and cannot fall back to IMG_FALLBACK on error like this does. */
 import { KIcon } from "@/lib/icons";
-import { useState, type ChangeEvent, type FormEvent } from "react";
+import { useEffect, useState, type ChangeEvent, type FormEvent } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/components/AuthProvider";
 import { useRealtime, subscribeBusinessById, subscribeMyPlan, subscribeMyTeamMemberships, listenerHint } from "@/lib/realtime";
 import {
-  updateBusiness, addBusinessPhotoLink, removeBusinessPhotoLink,
+  updateBusiness, updateBusinessContacts, addBusinessPhotoLink, removeBusinessPhotoLink,
   setBusinessLiveStatus, deleteBusiness,
 } from "@/lib/repo";
 import { uploadBusinessPhoto } from "@/lib/storage";
@@ -18,11 +18,12 @@ import { cities, suburbsForCity } from "@/data/locations";
 import { categories } from "@/data/categories";
 import { SignInInline } from "@/components/dash/parts";
 import { IMG_FALLBACK } from "@/lib/utils";
+import { OptionalMark, RequiredFieldsLegend, RequiredMark } from "@/components/forms/FormFields";
 
 type Biz = {
   id: string; name?: string; categorySlug?: string; suburbSlug?: string; citySlug?: string;
   phone?: string; whatsapp?: string; website?: string; facebook?: string; instagram?: string;
-  address?: string; hours?: string; services?: string[]; description?: string; priceNote?: string;
+  hours?: string; services?: string[]; description?: string; priceNote?: string;
   coverImageUrl?: string; photos?: string[]; ownerUid?: string; plan?: string; status?: string;
 };
 
@@ -65,6 +66,7 @@ export default function EditBusinessForm({ id }: { id: string }) {
     String(member.ownerUid ?? "") === b?.ownerUid && String(member.status ?? "") === "active"
   )?.role ?? "");
   const canEdit = isOwner || isTeamMember;
+  const canManageContacts = isOwner || (isTeamMember && teamRole === "manager");
   const plan = ((isTeamMember ? b?.plan : sub.rows[0]?.plan) as Plan) ?? (b?.plan as Plan) ?? "free";
 
   const [form, setForm] = useState<Record<string, string>>({});
@@ -73,6 +75,39 @@ export default function EditBusinessForm({ id }: { id: string }) {
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [link, setLink] = useState("");
+
+  useEffect(() => {
+    if (!b?.id || !canManageContacts || !user) return;
+    let active = true;
+    void (async () => {
+      const token = await user.getIdToken();
+      const response = await fetch(`/api/business?businessId=${encodeURIComponent(id)}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const result = await response.json() as {
+        ok?: boolean;
+        error?: string;
+        contacts?: Record<string, unknown>;
+      };
+      if (!response.ok || !result.ok) throw new Error(result.error ?? "Could not load private business contacts.");
+      if (active) {
+        const contacts = result.contacts ?? {};
+        setForm((current) => ({
+          ...current,
+          phone: String(contacts.phone ?? ""),
+          email: String(contacts.email ?? ""),
+          whatsapp: String(contacts.whatsapp ?? ""),
+          website: String(contacts.website ?? ""),
+          facebook: String(contacts.facebook ?? ""),
+          instagram: String(contacts.instagram ?? ""),
+          address: String(contacts.address ?? ""),
+        }));
+      }
+    })().catch((cause: unknown) => {
+      if (active) setErr(cause instanceof Error ? cause.message : "Could not load private business contacts.");
+    });
+    return () => { active = false; };
+  }, [b?.id, canManageContacts, id, user]);
 
   // Seed the form once per listing. This runs during render (React's documented
   // "adjust state when a prop changes" pattern) instead of in an effect, which
@@ -83,15 +118,16 @@ export default function EditBusinessForm({ id }: { id: string }) {
       categorySlug: b.categorySlug ?? categories[0].slug,
       citySlug: b.citySlug ?? "pretoria",
       suburbSlug: b.suburbSlug ?? "",
-      phone: b.phone ?? "",
-      address: b.address ?? "",
+      phone: "",
+      email: "",
+      address: "",
       hours: b.hours ?? "",
       priceNote: b.priceNote ?? "",
       description: b.description ?? "",
       services: (b.services ?? []).join(", "),
       coverImageUrl: b.coverImageUrl ?? "",
-      whatsapp: b.whatsapp ?? "",
-      website: b.website ?? "",
+      whatsapp: "",
+      website: "",
       facebook: b.facebook ?? "",
       instagram: b.instagram ?? "",
     });
@@ -101,11 +137,27 @@ export default function EditBusinessForm({ id }: { id: string }) {
   const set = (k: string, v: string) => setForm((f) => ({ ...f, [k]: v }));
   const can = (c: Capability) => hasCap(plan, c) && (!isTeamMember || teamRole === "manager");
   const paused = String(b?.status ?? "live") === "paused";
-async function save(e: FormEvent) {
+async function save(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    const invalidField = Array.from(e.currentTarget.querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>("input, textarea, select"))
+      .find((field) => !field.disabled && !field.validity.valid);
+    if (invalidField) {
+      invalidField.setAttribute("aria-invalid", "true");
+      invalidField.setAttribute("aria-describedby", "business-edit-error");
+      setErr(`${invalidField.labels?.[0]?.innerText.replace("*", "").trim() ?? "This field"}: ${invalidField.validationMessage || "Check this field."}`);
+      invalidField.focus();
+      return;
+    }
     setBusy(true); setErr(null); setMsg(null);
     try {
-      await updateBusiness(id, form, plan);
+      const {
+        phone = "", email = "", whatsapp = "", website = "", facebook = "", instagram = "", address = "",
+        ...publicFields
+      } = form;
+      await updateBusiness(id, publicFields, plan);
+      if (canManageContacts) {
+        await updateBusinessContacts(id, { phone, email, whatsapp, website, facebook, instagram, address });
+      }
       setMsg("Saved ✓ Buyers see your changes instantly.");
     } catch (e2) {
       setErr(e2 instanceof Error ? e2.message : "Could not save.");
@@ -201,7 +253,7 @@ if (error) {
           {b.name} is managed by another account. Own this business? Claim it from the public profile — we verify ownership by phone.
         </p>
         <div className="flex flex-wrap gap-2 justify-center">
-          <Link href={`/business/${id}`} className="btn-navy text-sm">View listing &amp; claim →</Link>
+          <Link href={`/business/${id}`} className="btn-navy text-sm">View listing &amp; claim </Link>
           <Link href="/dashboard" className="btn-hippo text-sm">My dashboard</Link>
         </div>
       </div>
@@ -233,7 +285,7 @@ if (error) {
           </p>
         </div>
         <div className="ml-auto flex flex-wrap gap-2">
-          <Link href={`/business/${id}`} className="btn-navy text-sm">View public page →</Link>
+          <Link href={`/business/${id}`} className="btn-navy text-sm">View public page </Link>
           {isOwner && (
             <button type="button" onClick={toggleStatus} disabled={busy} className="btn-hippo text-sm disabled:opacity-50">
               {paused ? "Put back online" : "Pause listing"}
@@ -243,7 +295,7 @@ if (error) {
       </header>
 
       {msg && <p className="text-sm font-bold text-[#3c6b1d] bg-[#e8f6d8] rounded-2xl px-4 py-3">{msg}</p>}
-      {err && <p className="text-sm font-bold text-red-700 bg-red-50 rounded-2xl px-4 py-3">{err}</p>}
+      {err && <p id="business-edit-error" role="alert" className="text-sm font-bold text-red-700 bg-red-50 rounded-2xl px-4 py-3">{err}</p>}
 
       <section className="hippo-card p-5">
         <h2 className="font-black text-[#10243e]">What your plan unlocks</h2>
@@ -256,27 +308,49 @@ if (error) {
             </li>
           ))}
         </ul>
-        <Link href="/list-business" className="btn-sun text-sm mt-3 inline-flex">Change plan →</Link>
+        <Link href="/list-business" className="btn-sun text-sm mt-3 inline-flex">Change plan </Link>
       </section>
-      <form onSubmit={save} className="space-y-5">
+      <form
+        onSubmit={save}
+        noValidate
+        onInvalidCapture={(event) => {
+          const field = event.target;
+          if (field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement || field instanceof HTMLSelectElement) {
+            field.setAttribute("aria-invalid", "true");
+            field.setAttribute("aria-describedby", "business-edit-error");
+            setErr(`${field.labels?.[0]?.innerText.replace("*", "").trim() ?? "This field"}: ${field.validationMessage}`);
+          }
+        }}
+        onInputCapture={(event) => {
+          const field = event.target;
+          if ((field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement || field instanceof HTMLSelectElement) && field.validity.valid) {
+            field.removeAttribute("aria-invalid");
+            field.removeAttribute("aria-describedby");
+            setErr(null);
+          }
+        }}
+        className="space-y-5"
+      >
+        <RequiredFieldsLegend />
         <section className="hippo-card p-5 space-y-4">
           <h2 className="font-black text-[#10243e]">Basics — always editable</h2>
 
           <label className="block text-sm font-black text-[#10243e]">
-            Business name
-            <input required value={form.name ?? ""} onChange={(e) => set("name", e.target.value)} className={inputCls} />
+            Business name <RequiredMark />
+            <input required minLength={2} value={form.name ?? ""} onChange={(e) => set("name", e.target.value)} className={inputCls} />
           </label>
 
           <div className="grid sm:grid-cols-2 gap-4">
             <label className="block text-sm font-black text-[#10243e]">
-              Category
-              <select value={form.categorySlug ?? ""} onChange={(e) => set("categorySlug", e.target.value)} className={inputCls}>
+              Category <RequiredMark />
+              <select required value={form.categorySlug ?? ""} onChange={(e) => set("categorySlug", e.target.value)} className={inputCls}>
                 {categories.map((c) => <option key={c.slug} value={c.slug}>{c.icon} {c.name}</option>)}
               </select>
             </label>
             <label className="block text-sm font-black text-[#10243e]">
-              City
+              City <RequiredMark />
               <select
+                required
                 value={form.citySlug ?? "pretoria"}
                 onChange={(e) => {
                   const citySlug = e.target.value;
@@ -292,40 +366,40 @@ if (error) {
 
           <div className="grid sm:grid-cols-2 gap-4">
             <label className="block text-sm font-black text-[#10243e]">
-              Suburb
-              <select value={form.suburbSlug ?? ""} onChange={(e) => set("suburbSlug", e.target.value)} className={inputCls}>
+              Suburb <RequiredMark />
+              <select required value={form.suburbSlug ?? ""} onChange={(e) => set("suburbSlug", e.target.value)} className={inputCls}>
                 {citySuburbs.map((s) => <option key={s.slug} value={s.slug}>{s.name}</option>)}
               </select>
             </label>
             <label className="block text-sm font-black text-[#10243e]">
-              Phone (shown to everyone)
-              <input required value={form.phone ?? ""} onChange={(e) => set("phone", e.target.value)} inputMode="tel" className={inputCls} />
+              Business phone (private) <RequiredMark />
+              <input required minLength={6} type="tel" disabled={!canManageContacts} value={form.phone ?? ""} onChange={(e) => set("phone", e.target.value)} inputMode="tel" className={inputCls} />
             </label>
           </div>
 
           <div className="grid sm:grid-cols-2 gap-4">
             <label className="block text-sm font-black text-[#10243e]">
-              Address
-              <input value={form.address ?? ""} onChange={(e) => set("address", e.target.value)} className={inputCls} />
+              Business address (private) <OptionalMark />
+              <input disabled={!canManageContacts} value={form.address ?? ""} onChange={(e) => set("address", e.target.value)} className={inputCls} />
             </label>
             <label className="block text-sm font-black text-[#10243e]">
-              Opening hours
+              Opening hours <OptionalMark />
               <input value={form.hours ?? ""} onChange={(e) => set("hours", e.target.value)} placeholder="Mon–Fri 08:00–17:00" className={inputCls} />
             </label>
           </div>
 
           <label className="block text-sm font-black text-[#10243e]">
-            Price note
+            Price note <OptionalMark />
             <input value={form.priceNote ?? ""} onChange={(e) => set("priceNote", e.target.value)} placeholder="Callout R450 · Hourly R550" className={inputCls} />
           </label>
 
           <label className="block text-sm font-black text-[#10243e]">
-            Description
+            Description <OptionalMark />
             <textarea rows={5} value={form.description ?? ""} onChange={(e) => set("description", e.target.value)} className={inputCls} />
           </label>
 
           <label className="block text-sm font-black text-[#10243e]">
-            Services <span className="font-normal text-[#1d3a5f]/50">(comma separated)</span>
+            Services <span className="font-normal text-[#1d3a5f]/50">(comma separated)</span> <OptionalMark />
             <input value={form.services ?? ""} onChange={(e) => set("services", e.target.value)} placeholder="Emergency plumbing, Leak repairs, Drain cleaning" className={inputCls} />
           </label>
         </section>
@@ -334,58 +408,68 @@ if (error) {
           <div>
             <h2 className="font-black text-[#10243e]">Plan-gated fields</h2>
             <p className="text-xs text-[#1d3a5f]/60 mt-1">
-              Locked fields are greyed out and stripped server-side on save — nothing you type here can leak through on a FREE plan.
+              Contact settings are private and available only to you and authorized team managers. Public listing content never includes these fields.
             </p>
           </div>
 
           <label className="block text-sm font-black text-[#10243e]">
-            WhatsApp number {capLock("whatsapp")}
+            WhatsApp number (private) <OptionalMark /> {capLock("whatsapp")}
             <input
-              disabled={!can("whatsapp")}
+              disabled={!can("whatsapp") || !canManageContacts}
               value={form.whatsapp ?? ""}
               onChange={(e) => set("whatsapp", e.target.value)}
               inputMode="tel"
               placeholder="27821234567"
-              className={can("whatsapp") ? inputCls : lockedCls}
+              className={can("whatsapp") && canManageContacts ? inputCls : lockedCls}
             />
           </label>
 
           <label className="block text-sm font-black text-[#10243e]">
-            Website {capLock("website")}
+            Website (private) <OptionalMark /> {capLock("website")}
             <input
-              disabled={!can("website")}
+              disabled={!can("website") || !canManageContacts}
               value={form.website ?? ""}
               onChange={(e) => set("website", e.target.value)}
               placeholder="https://"
-              className={can("website") ? inputCls : lockedCls}
+              className={can("website") && canManageContacts ? inputCls : lockedCls}
+            />
+          </label>
+          <label className="block text-sm font-black text-[#10243e]">
+            Business email (private) <OptionalMark />
+            <input
+              type="email"
+              disabled={!canManageContacts}
+              value={form.email ?? ""}
+              onChange={(e) => set("email", e.target.value)}
+              className={inputCls}
             />
           </label>
 
           <div className="grid sm:grid-cols-2 gap-4">
             <label className="block text-sm font-black text-[#10243e]">
-              Facebook page {capLock("socials")}
+              Facebook page <OptionalMark /> {capLock("socials")}
               <input
-                disabled={!can("socials")}
+                disabled={!can("socials") || !canManageContacts}
                 value={form.facebook ?? ""}
                 onChange={(e) => set("facebook", e.target.value)}
                 placeholder="https://facebook.com/…"
-                className={can("socials") ? inputCls : lockedCls}
+                className={can("socials") && canManageContacts ? inputCls : lockedCls}
               />
             </label>
             <label className="block text-sm font-black text-[#10243e]">
-              Instagram {capLock("socials")}
+              Instagram <OptionalMark /> {capLock("socials")}
               <input
-                disabled={!can("socials")}
+                disabled={!can("socials") || !canManageContacts}
                 value={form.instagram ?? ""}
                 onChange={(e) => set("instagram", e.target.value)}
                 placeholder="https://instagram.com/…"
-                className={can("socials") ? inputCls : lockedCls}
+                className={can("socials") && canManageContacts ? inputCls : lockedCls}
               />
             </label>
           </div>
 
           <label className="block text-sm font-black text-[#10243e]">
-            Cover photo link {capLock("photos")}
+            Cover photo link <OptionalMark /> {capLock("photos")}
             <input
               disabled={!can("photos")}
               value={form.coverImageUrl ?? ""}
@@ -435,14 +519,14 @@ if (error) {
             </>
           ) : (
             <p className="text-sm text-[#a36508] bg-[#fff4d6] rounded-2xl px-4 py-3">
-              <KIcon name="keyRound" size={14} className="inline shrink-0" /> A photo gallery is a <b>PRO</b> feature. <Link href="/list-business" className="font-bold underline">Upgrade for R199/mo</Link> to add photos buyers actually click on.
+              <KIcon name="keyRound" size={14} className="inline shrink-0" /> A larger photo gallery is a <b>Premium</b> feature. <Link href="/pricing" className="font-bold underline">Compare plans</Link> to see the available photo allowance.
             </p>
           )}
         </section>
 
         <div className="flex flex-wrap items-center gap-2">
           <button disabled={busy} className="btn-hippo text-sm disabled:opacity-60">{busy ? "Saving…" : "Save changes ✓"}</button>
-          <Link href={`/business/${id}`} className="btn-navy text-sm">View public page →</Link>
+          <Link href={`/business/${id}`} className="btn-navy text-sm">View public page </Link>
           {isOwner && (
             <button
               type="button"
