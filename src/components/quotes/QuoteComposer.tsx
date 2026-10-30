@@ -5,6 +5,7 @@ import { QUOTE_LIMITS, cleanQuoteDraft, validateQuote } from "@/lib/quotes";
 import { formatZAR } from "@/lib/plans";
 import { KIcon } from "@/lib/icons";
 import { useAuth } from "@/components/AuthProvider";
+import SignInModal from "@/components/SignInModal";
 
 const inputCls =
   "mt-1 w-full rounded-2xl border-2 border-[#e7eef5] focus:border-[#7ac142] px-4 py-3 text-sm font-normal bg-[#f2f6fa]/40 outline-none";
@@ -69,6 +70,7 @@ export default function QuoteComposer({
   const [warranty, setWarranty] = useState("");
   const [attachments, setAttachments] = useState("");
   const { user } = useAuth();
+  const [signInOpen, setSignInOpen] = useState(false);
   const [templates, setTemplates] = useState<QuoteTemplate[]>([]);
   const [templateName, setTemplateName] = useState("");
   const [selectedTemplate, setSelectedTemplate] = useState("");
@@ -199,11 +201,17 @@ export default function QuoteComposer({
         <span className="block text-sm font-bold text-[#10243e] min-w-0">{requestSummary ?? "This request"}</span>
         <button
           type="button"
-          onClick={toggleComposer}
+          onClick={() => {
+            if (!user?.uid) {
+              setSignInOpen(true);
+              return;
+            }
+            toggleComposer();
+          }}
           className="ml-auto text-xs font-extrabold text-[#558c2b] hover:underline"
           aria-expanded={open}
         >
-          {open ? "Close" : done ? "Send another quote" : "Send a quote "}
+          {!user?.uid ? "Sign in to send a quote" : open ? "Close" : done ? "Send another quote" : "Send a quote "}
         </button>
       </div>
 
@@ -348,6 +356,7 @@ export default function QuoteComposer({
 
         </form>
       )}
+      <SignInModal open={signInOpen} onClose={() => setSignInOpen(false)} presetRole="seller" />
     </div>
   );
 }
