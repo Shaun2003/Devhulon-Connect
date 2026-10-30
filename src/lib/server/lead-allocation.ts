@@ -379,7 +379,7 @@ export async function allocateBroadcastLeads(
  * allowance.
  */
 export async function createDirectLead(input: {
-  requesterUid: string | null;
+  requesterUid: string;
   businessId: string;
   need?: string;
   suburb?: string;
