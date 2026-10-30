@@ -12,9 +12,12 @@ import { KIcon } from "@/lib/icons";
 import { PlaceSuggestions } from "@/components/SearchBar";
 import { trackAnalyticsEvent } from "@/lib/track-analytics";
 import { FieldLabel, RequiredFieldsLegend } from "@/components/forms/FormFields";
+import { useAuth } from "@/components/AuthProvider";
+import { SignInInline } from "@/components/dash/parts";
 
 export default function RequestQuotePage({ searchParams }: { searchParams: Promise<{ business?: string; need?: string; suburb?: string; category?: string }> }) {
   const sp = use(searchParams);
+  const { user, loading } = useAuth();
   const businessId = (sp.business ?? "").trim();
   const initialNeed = (sp.need ?? "").trim();
   const initialCategory = sp.category && CATEGORY_GROUPS[sp.category]
@@ -79,7 +82,8 @@ export default function RequestQuotePage({ searchParams }: { searchParams: Promi
           consent: true,
         });
         trackAnalyticsEvent("quote_submitted", "quote_request");
-        setStatus(`Sent! Ref ${res.id}. The business has received your request; you can also contact them using their profile details.`);
+        setStatus(`Sent! Ref ${res.id}. You'll get a notification when the business replies. Check your notifications or compare quotes.`);
+        setCompareReady(true);
       } else {
         const res = await matchProRequest({
           need,
@@ -116,6 +120,39 @@ export default function RequestQuotePage({ searchParams }: { searchParams: Promi
   }
 
   const steps = ["Tell us what you need", "We match pros", "Compare & choose"];
+
+  if (loading || !user) {
+    return (
+      <div className="min-h-screen">
+        <PageHero
+          kicker="Free · 60 seconds · no spam"
+          title="Request a free quote"
+          sub="Sign in or create a free buyer account so you can track your request and get notified when businesses reply."
+          icon="file"
+          crumbs={[{ label: "Home", href: "/" }, { label: "Request a quote" }]}
+        />
+        <main className="mx-auto max-w-2xl px-4 py-10">
+          {loading ? (
+            <div className="hippo-card animate-pulse space-y-3 p-6" role="status" aria-label="Checking your account">
+              <span className="sr-only">Checking your account</span>
+              <div className="h-5 w-2/3 rounded bg-[#e7eef5]" />
+              <div className="h-4 w-full rounded bg-[#f2f6fa]" />
+              <div className="h-10 w-40 rounded-xl bg-[#e7eef5]" />
+            </div>
+          ) : (
+            <section className="hippo-card space-y-4 p-6 text-center">
+              <span className="icon-3d icon-3d-sm mx-auto" aria-hidden="true"><KIcon name="bell" size={24} /></span>
+              <h2 className="text-xl font-black text-[#10243e]">Sign in to request a quote</h2>
+              <p className="text-sm text-[#1d3a5f]/70">
+                Your account keeps your requests and seller replies together. We&apos;ll notify you when a business sends a quote, and you can compare every reply from your quote page.
+              </p>
+              <SignInInline />
+            </section>
+          )}
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen">
